@@ -9,5 +9,10 @@ out/*
 runs/*
 !runs/*.json
 
-# scratch probe from an earlier, buggy version of bench.py
+# scratch probes, not README numbers
 runs/bench.json
+runs/bench_quick.json
+runs/smoke*
+runs/ckpt*
+runs/*.pt
+!runs/policy_*.pt

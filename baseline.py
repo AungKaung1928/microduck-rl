@@ -18,7 +18,8 @@ reproducer does not get to survive.
 
 Single process, a few seconds, one core. Nothing here loads the machine.
 
-Run:  python3 baseline.py --seeds 20
+Run:  python3 baseline.py --seeds 20               # v1, the step-2 reward
+      python3 baseline.py --seeds 20 --reward v2   # v2, the step-3 reward
 """
 import os
 
@@ -34,7 +35,7 @@ import common             # noqa: E402
 import env as _env        # noqa: E402
 
 
-def episode(seed, policy, variant="groundcontact", **kw):
+def episode(seed, policy, variant="groundcontact", reward="v1", **kw):
     """One full episode. `policy` is "pd" (hold STAND) or "random".
 
     Both are needed for the reward diagnostics below, and using only one gives
@@ -43,7 +44,7 @@ def episode(seed, policy, variant="groundcontact", **kw):
     are identically zero for it and look dead when they are not. Random actions
     exercise both but tell you nothing about the baseline's return.
     """
-    e = _env.MicroduckEnv(variant=variant, seed=seed, **kw)
+    e = _env.MicroduckEnv(variant=variant, seed=seed, reward=reward, **kw)
     obs = e.reset(seed=seed)
     zero = e.zero_action()
     rng = np.random.default_rng(10_000 + seed)
@@ -70,19 +71,22 @@ def first_crossing(series, pred, dt):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", type=int, default=20)
-    ap.add_argument("--out", default="runs/baseline.json")
+    ap.add_argument("--reward", choices=sorted(_env.REWARDS), default="v1")
+    ap.add_argument("--out", default="")
     a = ap.parse_args()
+    out_path = a.out or ("runs/baseline.json" if a.reward == "v1" else f"runs/baseline_{a.reward}.json")
     dt = _env.CONTROL_DT
+    weights = _env.REWARDS[a.reward]
 
-    eps = [episode(s, "pd") for s in range(a.seeds)]
-    rnd = [episode(s, "random") for s in range(a.seeds)]
+    eps = [episode(s, "pd", reward=a.reward) for s in range(a.seeds)]
+    rnd = [episode(s, "random", reward=a.reward) for s in range(a.seeds)]
     returns = np.array([e["reward"].sum() for e in eps])
     floor = np.array([e["fallen"].mean() for e in eps])
     tilt = np.array([first_crossing(e["upright"], lambda x: x < 0.9, dt) for e in eps])
     down = np.array([first_crossing(e["height"], lambda x: x < _env.FALL_HEIGHT, dt)
                      for e in eps])
 
-    print(f"\nPD hold-pose baseline, {a.seeds} seeds, groundcontact, full task")
+    print(f"\nPD hold-pose baseline, {a.seeds} seeds, groundcontact, full task, reward {a.reward}")
     print(f"  return                      {returns.mean():7.1f} +- {returns.std(ddof=1):.1f}"
           f"   of a {2.0 * eps[0]['reward'].size:.0f} ceiling")
     print(f"  fraction of episode on floor {100*floor.mean():6.0f}%")
@@ -90,7 +94,7 @@ def main():
     print(f"  trunk reaches the floor     {np.nanmean(down):7.2f} s")
 
     # -- diagnostic 1: which reward terms are numerically alive ------------
-    keys = list(_env.REWARD_WEIGHTS)
+    keys = list(weights)
     def term_sums(group):
         return {k: float(np.mean([sum(t[k] for t in e["terms"]) for e in group]))
                 for k in keys}
@@ -100,20 +104,28 @@ def main():
     print(f"    {'term':<12} {'weight':>9} {'PD sum':>9} {'% ret':>7}"
           f" | {'random sum':>10} {'% ret':>7}")
     for k in keys:
-        print(f"    {k:<12} {_env.REWARD_WEIGHTS[k]:9.1e} {sums[k]:9.3f} "
+        print(f"    {k:<12} {weights[k]:9.1e} {sums[k]:9.3f} "
               f"{100*abs(sums[k])/abs(returns.mean()):6.2f}% | "
               f"{sums_r[k]:10.3f} {100*abs(sums_r[k])/abs(rnd_return):6.2f}%")
-    dead = [k for k in keys if _env.REWARD_WEIGHTS[k] < 0
+    dead = [k for k in keys if weights[k] < 0
             and abs(sums[k]) / abs(returns.mean()) < 0.01
             and abs(sums_r[k]) / abs(rnd_return) < 0.01]
     print(f"    Under 1% of the return under BOTH policies: "
           f"{', '.join(dead) if dead else 'none'}.")
     print("    action_rate is exactly 0 for the PD baseline because a constant\n"
-          "    action has no rate; it is live under any policy that moves.\n"
-          "    The others are dead as written, so the README's claim that step 3\n"
-          "    can show which penalty is doing the work would show three zeros.\n"
-          "    joint_vel's -2e-4 was set for the ~20 rad/s of a fall; measured\n"
-          "    joint speed is under 1 rad/s, which is 400x smaller once squared.")
+          "    action has no rate; it is live under any policy that moves.")
+    if a.reward == "v1":
+        print("    The others are dead as written, so the README's claim that step 3\n"
+              "    can show which penalty is doing the work would show three zeros.\n"
+              "    joint_vel's -2e-4 was set for the ~20 rad/s of a fall; measured\n"
+              "    joint speed is under 1 rad/s, which is 400x smaller once squared.")
+    else:
+        share = 100 * abs(sums_r["joint_vel"]) / abs(rnd_return)
+        target = 5.0
+        print(f"    v2: joint_vel is {share:.2f}% of the random-action return. The target\n"
+              f"    is ~{target:.0f}%; scale the weight by {target / max(share, 1e-9):.1f}x to get there\n"
+              f"    (-> {weights['joint_vel'] * target / max(share, 1e-9):.2e}). Changing it\n"
+              f"    re-baselines: rerun this script and update the README together.")
 
     # -- diagnostic 2: is there a gradient out of the fallen region? -------
     allr = eps + rnd
@@ -156,9 +168,10 @@ def main():
           "  fixed guess and the measured spread says it guessed wrong.")
 
     os.makedirs("runs", exist_ok=True)
-    with open(a.out, "w") as f:
+    with open(out_path, "w") as f:
         json.dump({
-            "seeds": a.seeds, "variant": "groundcontact",
+            "seeds": a.seeds, "variant": "groundcontact", "reward": a.reward,
+            "weights": weights,
             "episode_steps": int(eps[0]["reward"].size),
             "ceiling": 2.0 * int(eps[0]["reward"].size),
             "return_mean": float(returns.mean()),
@@ -173,7 +186,7 @@ def main():
             "reward_fallen_std": float(fall_r.std()),
             "obs_group_rms": rms,
         }, f, indent=2)
-    print(f"\n  wrote {a.out}")
+    print(f"\n  wrote {out_path}")
 
 
 if __name__ == "__main__":

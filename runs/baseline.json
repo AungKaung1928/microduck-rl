@@ -1,6 +1,15 @@
 {
   "seeds": 20,
   "variant": "groundcontact",
+  "reward": "v1",
+  "weights": {
+    "upright": 1.0,
+    "height": 1.0,
+    "posture": -0.1,
+    "action_rate": -0.05,
+    "joint_vel": -0.0002,
+    "effort": -0.02
+  },
   "episode_steps": 250,
   "ceiling": 500.0,
   "return_mean": 108.6867135095533,

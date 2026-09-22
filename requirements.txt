@@ -1,9 +1,15 @@
-# Pinned to what the README's numbers were measured on.
+# Pinned to what the README's numbers were measured on. CPU-only builds:
+# there is no CUDA anywhere in this project.
 mujoco==3.12.0
 numpy==2.2.6
 
+# Steps 3-5: training, export, latency. Install torch from the CPU index:
+#   pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
+torch==2.14.0
+onnx==1.22.0
+onnxruntime==1.23.2
+
 # Optional. Only drop_test.py's filmstrip needs an image writer, and it tries
-# cv2 first, then matplotlib, then skips rendering. Everything else -- the
-# tests, the model inspection, the benchmark -- runs on the two above.
+# cv2 first, then matplotlib, then skips rendering.
 #   opencv-python-headless
 #   matplotlib

@@ -1,6 +1,6 @@
-# microduck-rl-cpu — robot learning on a laptop with no GPU
+# microduck-rl — Microduck balance and push recovery
 
-Project 3 of a CPU-only ML track. The target is a balance-and-recover policy for
+Robot learning on a laptop with no GPU. The target is a balance-and-recover policy for
 the [Microduck](https://github.com/pollen-robotics/microduck_rl) — a 25 cm,
 737 g open-source biped with 14 position-controlled servos — trained in MuJoCo,
 evaluated on physics it never trained on, and exported to ONNX.
@@ -11,10 +11,13 @@ no hardware to buy. So the whole thing runs the same MJCF in plain CPU MuJoCo,
 parallel across processes, inside an 8-of-14-thread budget on a laptop that
 has other work to do.
 
-**Steps 1 and 2 are done.** Step 1 is the feasibility gate: is this machine
-fast enough to train a policy at all. Step 2 is the environment contract — what
-the policy sees, what it emits, when an episode ends — and the baseline it has
-to beat. Steps 3-5 are not started.
+**Steps 1 and 2 are measured. Steps 3-5 are code complete and not yet run.**
+Step 1 is the feasibility gate: is this machine fast enough to train a policy
+at all. Step 2 is the environment contract — what the policy sees, what it
+emits, when an episode ends — and the baseline it has to beat. Step 3 is PPO
+against that baseline, step 4 domain randomisation evaluated on held-out
+physics, step 5 ONNX export. Every number in the step 3-5 sections is marked
+`TODO(measure)` with the command that produces it; none has been typed in.
 
 Step 1's throughput numbers were re-measured on 2026-09-10 and came back 40%
 higher across 8 processes. The original table had been taken on a machine in a
@@ -694,11 +697,216 @@ Step 3 needs a running observation normaliser rather than a better fixed guess.
 2. **Environment contract — done.** 48-dim observation, 14-dim action, 50 Hz,
    fixed-length episodes with seeded pushes, hand-written multiprocess vector
    env, 27 contract tests.
-3. PPO against a PD hold-pose baseline, reusing the implementation from
-   [ppo-from-scratch](https://github.com/AungKaung1928/ppo-from-scratch).
-   Metric: recovery rate under randomised pushes, n=100, seeds reported.
-4. Domain randomisation, evaluated on `walk_backlash`. Report the gap.
-5. ONNX export, single-thread latency, verified against PyTorch two ways.
+3. **PPO — code complete, not yet run.** Vectorised PPO from
+   [ppo-from-scratch](https://github.com/AungKaung1928/ppo-from-scratch) with a
+   running observation normaliser, truncation bootstrap and chunked checkpoints,
+   against the PD hold-pose baseline under a re-decided reward (below).
+   Metric: recovery rate under randomised pushes, 100 episodes x 5 seeds.
+4. **Domain randomisation — code complete, not yet run.** Ranges from the four
+   measured servo fits; evaluated on `groundcontact_backlash` and `rollers`,
+   not `walk_backlash` (see step 4 for why the plan changed). Report the gap.
+5. **ONNX export — code complete, not yet run.** Normaliser folded into the
+   graph, verified against PyTorch on rollout observations, 1-thread p50/p99.
+
+## Step 3 — the reward decision
+
+Step 2 closed with three measured facts about the reward and a note that
+changing it was a step-3 decision, because it invalidates the 108.7 baseline.
+Here is the decision, with one more measurement taken while making it.
+
+The three facts, from `baseline.py` (20 seeds, PD and random actions):
+
+1. **Three of four penalties are dead.** `posture`, `effort` and `joint_vel`
+   are each under 0.25% of the return under both policies. `joint_vel`'s
+   −2e−4 was set for the ~20 rad/s of a fall; measured joint speed is under
+   1 rad/s, 400x smaller once squared.
+2. **The fallen region is nearly flat.** 0.12 ± 0.04 per step while down
+   against 1.92 ± 0.05 upright. The height term is a 3 cm Gaussian about
+   0.12 m, worth ~1e−3 at floor level.
+3. **`OBS_SCALE` guessed wrong.** A 13x rms spread across observation groups,
+   with the 28 body-configuration dims carrying the least variance.
+
+The fourth, measured for this decision (`test_reward.py`, 1,248 fallen steps
+over 6 episodes): **the fallen duck lies with trunk cosine between 0.0 and
+0.3 and trunk height between 3.1 and 6 cm; the cosine never went below
+−0.06.** It lands on its front or side, trunk near horizontal. It does not
+roll past 90°.
+
+That last number changed the first draft of the decision. The obvious fix for
+a floored `upright` term — `(1 + cos)/2`, so tilting past 90° still costs
+something — would halve the slope of the one gradient the fallen region
+already has, in the band the robot actually occupies, to buy a gradient in a
+band it never enters. Rejected on the measurement.
+
+**Reward v2**, selectable as `MicroduckEnv(reward="v2")`; v1 stays
+byte-identical under `reward="v1"` (the default) so the 108.7 ± 2.9 baseline
+remains reproducible, and `test_reward.py` pins two v1 episode returns to the
+last decimal:
+
+| term | v1 | v2 | why |
+|---|---|---|---|
+| upright | +1.0 · max(0, cos) | **unchanged** | slope 1 per unit cos where the duck actually lies; the floor never engages |
+| height | +1.0 · exp(−((h−0.12)/0.03)²) | **+1.0 · clip(h / 0.12, 0, 1)** | the Gaussian is 1e−4..0.02 across the whole fallen height range; the ramp is 8.3 per metre everywhere below STAND. This is the term that makes lifting the trunk while tilted worth anything |
+| posture | −0.10 | **dropped** | under 0.25% of the return |
+| effort | −0.02 | **dropped** | under 0.25%, and actuator force is not something the real servos report |
+| action rate | −0.05 | unchanged | the one penalty measured live |
+| joint velocity | −2e−4 | **−2e−3** | 10x; still a placeholder. `baseline.py --reward v2` prints the term's share of the random-action return and the factor that would put it at ~5%; the run phase sets it |
+
+The ceiling stays 2.0 per step, 500 per episode. Measured on the same
+trajectories under both rewards: within the fallen region the reward's slope
+against trunk height is **−1.3 per metre under v1 and +6.6 under v2**
+(the ramp's 8.3 less the other terms' correlation), and the v2 fallen mean is
+0.87 against 2.0 for a held stand, so the return still prefers standing.
+
+Fact 3 is handled in the training loop, not the reward: PPO carries a running
+observation normaliser (Welford, saved in the checkpoint, folded into the
+ONNX graph at export). `OBS_SCALE` stays as the fixed pre-scale it always was.
+
+**The v2 PD baseline is `TODO(measure)`:** `python baseline.py --seeds 20
+--reward v2` → `runs/baseline_v2.json`. The v1 number does not transfer.
+
+Also found while wiring this up: **MuJoCo 3.12 no longer has the
+`mjENBL_SENSORNOISE` flag** that step 2 planned to flip. The model still
+carries the declared magnitudes (`model.sensor_noise`: 0.005 rad/s on the
+gyro, 0.001 on the orientation quaternion), so `MicroduckEnv(sensor_noise=True)`
+applies them itself — same numbers, applied by the environment instead of the
+simulator. `test_reward.py` checks the gyro moves and nothing else does.
+
+## Step 3 — PPO against the baseline (code complete, not yet run)
+
+`ppo.py`. The loop from ppo-from-scratch — GAE, orthogonal init, clipped
+surrogate, multi-epoch minibatches, lr anneal — with four things this
+environment demands on top:
+
+| | |
+|---|---|
+| vectorised rollouts | `VecEnv`, 8 forked workers, one observation batch per step |
+| running normaliser | Welford mean/variance over every observation seen; part of the policy, saved and exported with it |
+| truncation bootstrap | every episode ends on the step limit and none on a terminal state, so the bootstrap on `done` is V(terminal_obs), carried across by the vector env. Zeroing it corrupts the value target ~100 steps back at γ = 0.99. `test_ppo.py` shows the corruption on a hand-computed 3-step case |
+| chunking | `--chunk-steps` per invocation, checkpoint every N updates, `--resume` restores model, optimiser, normaliser, RNG state and step counter. A killed run loses at most one checkpoint interval |
+
+Gaussian policy, separate actor and critic MLPs (2 × 256, tanh), entropy
+coefficient 0 (a Gaussian's differential entropy is unbounded below, so a
+bonus pushes σ up without a floor). Throughput is logged every update and the
+log says so when the rolling rate falls more than 20% below the first five
+updates — on this machine that is the only visible sign of a thermal or power
+limit, and it looks identical to contention, so the warning says to check
+both. The box check refuses to start above a 1-minute load of 4.
+
+What resume promises and what it does not: two resumes from the same
+checkpoint are bit-identical (`test_ppo.py`). A split run is **not**
+bit-identical to an uninterrupted one, because the workers' physics state is
+not checkpointed and the resumed chunk starts fresh episodes. Stated rather
+than papered over.
+
+Metrics are defined once in `metrics.py` and used by the in-training
+evaluation and by `eval_policy.py`, so the curve and the final table cannot
+disagree:
+
+| metric | definition |
+|---|---|
+| return | sum of per-step reward; 500 ceiling under either reward, the two not comparable to each other |
+| survival | fraction of steps with the trunk above 4 cm |
+| recovery | per push: upright (cos > 0.9) within 2 s of the push. Pushes that land on an already-fallen robot are excluded from the denominator and counted separately, so they cannot hide a policy that lives on the floor |
+| time to recover | push step to first upright step, p50 / p90 over recovered pushes |
+
+Budget at the measured ~13,300 env-steps/s: 50M steps = 1.0 h, two chunks.
+The rate with a policy in the loop is itself unmeasured — see *What steps 1
+and 2 do not prove* — and `ppo.py` prints it every update, so the first chunk
+measures it.
+
+### Step 3 results — `TODO(measure)`
+
+```bash
+OMP_NUM_THREADS=1 nice -n 10 python ppo.py --total-steps 50000000 --chunk-steps 25000000 --tag v2 --reward v2
+OMP_NUM_THREADS=1 nice -n 10 python ppo.py --resume runs/ppo_v2.ckpt.pt --tag v2
+python eval_policy.py runs/ppo_v2.pt --variant groundcontact       # -> runs/eval_v2_groundcontact.json
+```
+
+100 episodes × 5 seeds, deterministic (mean) actions, PD baseline on the
+same seeds:
+
+| policy | return (± over seeds) | survival | recovery (± over seeds) | recover p50 / p90 s | pushes on a fallen robot |
+|---|---|---|---|---|---|
+| PPO v2, 50M steps | TODO(measure) | TODO(measure) | TODO(measure) | TODO(measure) | TODO(measure) |
+| PD hold-pose, reward v2 | TODO(measure) | TODO(measure) | TODO(measure) | TODO(measure) | TODO(measure) |
+
+Training rate with the policy in the loop: TODO(measure), from
+`runs/ppo_v2.json` (`rate_first5` against `rate_last5` is the throttling
+check). The action-scale question step 2 left open — 0.2 and 0.5 against the
+0.35 default — is a `--action-scale` flag and two more runs; whether it is
+answered or dropped is recorded in `docs/ISSUES.md`.
+
+## Step 4 — domain randomisation and the held-out physics (code complete, not yet run)
+
+**The plan changed, and the reason is finding 1 again.** Step 2 named
+`walk_backlash` as the held-out model. It cannot be: `walk_backlash` is the
+`walk` collision set with backlash joints added, so only its two feet can
+touch the floor and a fallen robot sinks through the world exactly as on
+`walk`. Upstream also ships `robot_groundcontact_backlash.xml`, the
+ground-contact model with the same backlash joints (10 floor-collidable geoms,
+nq 35), and `rollers` was always ground-contact based (12 geoms). Those two
+are `common.HELDOUT_VARIANTS`. `walk_backlash` stays in the repo for the
+strided-index test, which is what it was good for. `test_dr.py` asserts both
+held-out variants rest on the floor and keep the 14-actuator order.
+
+`dr.py`. The ranges come from the model, not from taste:
+
+| factor | range | source |
+|---|---|---|
+| servo damping, frictionloss, armature, kp, force limit | uniform between the min and max of the four fitted `chosen_actuator*` classes, all 14 servos together | `joints_properties.xml`; frictionloss spans 6.7x, the rest under 1.5x |
+| body mass and inertia | × 0.85 – 1.15, every body | — |
+| floor sliding friction | × 0.6 – 1.2 | — |
+| action latency | 0 – 2 control steps (0 – 40 ms) | applied in `step()`; `prev_action` in the observation stays the action just emitted, because that is what the policy actually knows |
+| initial-state noise | 0.02 – 0.3 rad | this is what makes step 2's reset-clamp fix live |
+| sensor noise | gyro 0.005 rad/s, quaternion 0.001 | `model.sensor_noise`, applied by the env (see step 3) |
+
+Nominal values are captured once; `apply` is always relative to the vendored
+model and `restore` puts every array back bit for bit (`test_dr.py`).
+
+### Step 4 results — `TODO(measure)`
+
+```bash
+OMP_NUM_THREADS=1 nice -n 10 python ppo.py --total-steps 50000000 --chunk-steps 25000000 --tag v2dr --reward v2 --dr
+OMP_NUM_THREADS=1 nice -n 10 python ppo.py --resume runs/ppo_v2dr.ckpt.pt --tag v2dr
+python eval_gap.py --nominal runs/ppo_v2.pt --dr runs/ppo_v2dr.pt          # -> runs/gap.json
+```
+
+| trained | evaluated on | recovery | ± seeds | return | gap vs training model |
+|---|---|---|---|---|---|
+| nominal | `groundcontact` | TODO(measure) | | | — |
+| nominal | `groundcontact_backlash` | TODO(measure) | | | TODO(measure) |
+| nominal | `rollers` | TODO(measure) | | | TODO(measure) |
+| DR | `groundcontact` | TODO(measure) | | | — |
+| DR | `groundcontact_backlash` | TODO(measure) | | | TODO(measure) |
+| DR | `rollers` | TODO(measure) | | | TODO(measure) |
+
+The difference between the two gap columns is the number domain
+randomisation is worth on this robot. It may be zero or negative; that is a
+result too.
+
+## Step 5 — ONNX export and single-thread latency (code complete, not yet run)
+
+`export_onnx.py`. One graph from the raw 48-dim observation to the 14-dim
+mean action, with the normaliser folded in — a policy shipped without its
+normaliser is a different policy. Verified before it is timed: 1,000
+observations from the policy's own rollouts (not white noise, which the
+normaliser has never seen) through both paths, max |torch − onnx| under 1e−5.
+`test_export.py` proves the fold with a random actor: the graph disagrees with
+the un-normalised actor and agrees with the training-time path.
+
+### Step 5 results — `TODO(measure)`
+
+```bash
+python export_onnx.py runs/ppo_v2.pt          # -> runs/policy_v2.onnx, runs/onnx_v2.json
+```
+
+| | value |
+|---|---|
+| max \|torch − onnx\| over 1,000 rollout observations | TODO(measure) |
+| ONNX Runtime, 1 intra-op thread, batch 1, p50 / p99 | TODO(measure) |
+| torch eager, 1 thread, batch 1, p50 / p99 | TODO(measure) |
+| share of the 20 ms control period used at p99 | TODO(measure) |
 
 ## What steps 1 and 2 do not prove
 
@@ -748,6 +956,10 @@ Step 3 needs a running observation normaliser rather than a better fixed guess.
   `/proc/<pid>/stat` twice a fraction of a second apart and reports the rate
   *now*, in percent of one core, warning only above 20% of a core. The
   certified sweep raised no warning under the corrected check.
+- Steps 3-5 are code with tests, not results. The training loop has run for
+  4,096 env steps on two workers to prove it goes end to end; nothing it
+  produced is quoted here. Whether the task is learnable, whether DR helps,
+  and what the policy costs at inference are all `TODO(measure)` above.
 - Run-to-run spread on the certified sweep is about 1% at 8 processes, from
   two runs seven minutes apart. That is not enough samples to call it a
   distribution, and it says nothing about spread across days, where the host
@@ -756,16 +968,25 @@ Step 3 needs a running observation normaliser rather than a better fixed guess.
 
 ## Reproducing
 
-From a fresh clone. The only hard dependencies are `mujoco` and `numpy`.
+From a fresh clone. Steps 1-2 need only `mujoco` and `numpy`; steps 3-5 add
+CPU `torch`, `onnx` and `onnxruntime`.
 
 ```bash
-git clone https://github.com/AungKaung1928/microduck-rl-cpu.git
-cd microduck-rl-cpu
+git clone https://github.com/AungKaung1928/microduck-rl.git
+cd microduck-rl
 python3 -m venv .venv && . .venv/bin/activate
+pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 
 ./fetch_assets.sh        # pinned upstream commit, ~24 MB, gitignored
-./verify.sh              # tiers 1-4 are cheap; tier 5 loads the box
+./verify.sh              # tiers 1-8 are cheap; tier 9 prints the runs that load the box
+```
+
+Or in a container, which runs the asset-free checks by default:
+
+```bash
+docker build -t microduck-rl . && docker run --rm microduck-rl
+docker run --rm microduck-rl bash -c './fetch_assets.sh && ./verify.sh'
 ```
 
 The benchmark is the only part that needs the machine to itself:
@@ -781,8 +1002,16 @@ Everything else is cheap and single-core:
 ```bash
 python3 test_model.py     # the MJCF contract: variants, actuator order, classes
 python3 test_env.py       # 27 environment contract checks
+python3 test_reward.py    # v1 pinned to the last decimal; v2 does what the decision says
+python3 test_dr.py        # measured ranges, exact apply/restore, held-out variants
+python3 test_ppo.py       # GAE by hand, normaliser vs numpy, deterministic resume
+python3 test_export.py    # normaliser is inside the ONNX graph
 python3 baseline.py       # the PD baseline and the three step-3 risks
+python3 baseline.py --reward v2
 ```
+
+The training, evaluation and export commands are in the step 3-5 sections
+above and at the end of `verify.sh`. Open items are in `docs/ISSUES.md`.
 
 Use the interpreter the virtual environment above provides. A bare `python` is
 not a command on every system, and `nice` reports a missing interpreter as
@@ -803,6 +1032,7 @@ your machine actually has.
 
 Intel Core Ultra 5 225H, 14 cores, no hyperthreading, 21 GB available to WSL2.
 Windows 11 + WSL2 (kernel 6.18.33.2), Ubuntu 22.04, Python 3.10, MuJoCo 3.12,
+torch 2.14 CPU, onnxruntime 1.23,
 `MUJOCO_GL=glfw` through WSLg (llvmpipe software rendering — `egl` and `osmesa`
 both fail on this box). No CUDA anywhere.
 

@@ -32,7 +32,15 @@ VARIANTS = {
     "walk_backlash": "scene_walk_backlash.xml",
     "rollers": "scene_rollers.xml",
     "groundcontact": "scene.xml",
+    # Backlash joints on the ground-contact model (10 floor-collidable geoms).
+    # `walk_backlash` has the backlash but only the feet can touch the floor,
+    # so a fallen robot sinks through the world there; for a stand-and-recover
+    # policy the held-out physics has to be this one.
+    "groundcontact_backlash": "scene_backlash.xml",
 }
+# The variants a policy trained on `groundcontact` is evaluated on and never
+# trained on. Both rest on the floor when toppled; both keep the 14 actuators.
+HELDOUT_VARIANTS = ("groundcontact_backlash", "rollers")
 
 # Order is fixed by the <actuator> block in robot_walk.xml. Written out rather
 # than read from the model so that a test can catch an upstream reordering,

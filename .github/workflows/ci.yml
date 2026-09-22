@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  OMP_NUM_THREADS: "1"
+  MUJOCO_GL: disable
+
+jobs:
+  no-assets:
+    # Everything that runs without the upstream meshes: PPO maths, normaliser,
+    # ONNX export of a random actor.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -r requirements.txt
+      - run: python test_ppo.py
+      - run: python test_export.py
+
+  full:
+    # Fetch the pinned upstream MJCF + meshes, then the whole suite: model
+    # contract, environment contract, both rewards, DR, PPO resume, export.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -r requirements.txt
+      - run: ./fetch_assets.sh
+      - run: python test_model.py
+      - run: python test_env.py
+      - run: python test_reward.py
+      - run: python test_dr.py
+      - run: python test_ppo.py
+      - run: python test_export.py
+      - name: baseline, both rewards, 3 seeds
+        run: python baseline.py --seeds 3 --out /tmp/b1.json && python baseline.py --seeds 3 --reward v2 --out /tmp/b2.json
+      - name: PPO smoke, 1024 env steps
+        run: python ppo.py --total-steps 1024 --num-envs 2 --num-steps 64 --eval-every 0 --ckpt-every 0 --tag ci --out /tmp/ci --force
