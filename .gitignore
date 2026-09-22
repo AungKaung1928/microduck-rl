@@ -16,3 +16,9 @@ runs/smoke*
 runs/ckpt*
 runs/*.pt
 !runs/policy_*.pt
+
+# the policy every step-3/step-5 number was measured on, and its export (under 1 MB each),
+# so eval_policy.py and export_onnx.py run from a clone; the resume checkpoint stays local
+!runs/ppo_*.pt
+runs/*.ckpt.pt
+!runs/policy_*.onnx

@@ -1,0 +1,57 @@
+{
+  "seeds": 20,
+  "variant": "groundcontact",
+  "reward": "v2",
+  "weights": {
+    "upright": 1.0,
+    "height": 1.0,
+    "action_rate": -0.05,
+    "joint_vel": -0.042
+  },
+  "episode_steps": 250,
+  "ceiling": 500.0,
+  "return_mean": 175.15422379131022,
+  "return_std": 3.1340732320474447,
+  "floor_fraction": 0.5439999999999999,
+  "tilt_s": 0.645,
+  "down_s": 2.279,
+  "term_sums": {
+    "upright": 70.00333161495854,
+    "height": 105.44066801566684,
+    "action_rate": 0.0,
+    "joint_vel": -0.2897758393151745
+  },
+  "term_sums_random": {
+    "upright": 67.90629175707238,
+    "height": 105.75139873538555,
+    "action_rate": -8.332290777913615,
+    "joint_vel": -8.231241600170243
+  },
+  "random_return": 157.09415811437407,
+  "reward_upright_mean": 1.8959142268517428,
+  "reward_upright_std": 0.05060498651413943,
+  "reward_fallen_mean": 0.4162645937825203,
+  "reward_fallen_std": 0.07737411625693331,
+  "obs_group_rms": {
+    "joint_pos": {
+      "pd": 0.07682448625564575,
+      "random": 0.09379102289676666
+    },
+    "joint_vel": {
+      "pd": 0.008308308199048042,
+      "random": 0.044200312346220016
+    },
+    "prev_action": {
+      "pd": 0.0,
+      "random": 0.5752083659172058
+    },
+    "gyro": {
+      "pd": 0.14219290018081665,
+      "random": 0.21147321164608002
+    },
+    "proj_grav": {
+      "pd": 0.5773502588272095,
+      "random": 0.5773502588272095
+    }
+  }
+}

@@ -25,6 +25,17 @@ HAVE_TORCH=1
 "$PY" -c 'import torch, onnxruntime' 2>/dev/null || HAVE_TORCH=0
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 
+# Which build produced the numbers below. Tier 3 compares two v1 returns to the
+# last bit, and MuJoCo's contact solver moves between releases, so a different
+# version fails that check without anything being wrong with the code.
+MJ_PIN=$(sed -n 's/^mujoco==//p' requirements.txt)
+MJ_HAVE=$("$PY" -c 'import mujoco; print(mujoco.__version__)')
+echo "interpreter $("$PY" -c 'import sys; print(sys.executable)')  mujoco $MJ_HAVE"
+if [ "$MJ_HAVE" != "$MJ_PIN" ]; then
+  echo "    warning: requirements.txt pins mujoco==$MJ_PIN. Tier 3's two bit-exact v1" >&2
+  echo "    returns were measured on the pin and will fail here. Everything else holds." >&2
+fi
+
 hr() { printf '\n=== %s ===\n' "$1"; }
 
 if [ ! -f assets/scene_walk.xml ]; then

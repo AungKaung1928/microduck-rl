@@ -70,6 +70,7 @@ class Config:
     num_steps: int = 256            # per env per update
     lr: float = 3e-4
     anneal_lr: bool = True
+    target_kl: float = 0.0          # >0 = stop the epoch loop once mean approx KL of an epoch exceeds it
     gamma: float = 0.99
     gae_lambda: float = 0.95
     update_epochs: int = 5
@@ -330,6 +331,8 @@ def train(cfg, resume=None, verbose=True):
             idx = np.arange(cfg.batch_size)
             clipfracs, approx_kls = [], []
             for _ in range(cfg.update_epochs):
+                if cfg.target_kl > 0 and approx_kls and float(np.mean(approx_kls[-cfg.num_minibatches:])) > cfg.target_kl:
+                    break
                 np.random.shuffle(idx)
                 for s in range(0, cfg.batch_size, cfg.minibatch_size):
                     mb = idx[s:s + cfg.minibatch_size]
@@ -425,9 +428,11 @@ if __name__ == "__main__":
     a = p.parse_args()
     if a.resume:
         cfg = Config(**torch.load(a.resume, weights_only=False)["config"])
-        for k in ("total_steps", "chunk_steps", "tag", "out", "eval_every", "ckpt_every"):
+        for k in ("total_steps", "chunk_steps", "tag", "out", "eval_every", "ckpt_every", "lr", "target_kl"):
             if getattr(a, k) is not None:
                 setattr(cfg, k, getattr(a, k))
+        if a.no_anneal_lr:
+            cfg.anneal_lr = False
     else:
         over = {k: v for k, v in vars(a).items() if k in asdict(d) and v is not None}
         cfg = Config(**over)

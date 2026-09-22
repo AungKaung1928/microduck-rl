@@ -127,9 +127,9 @@ STAND_HEIGHT = 0.12    # m. The STAND keyframe's trunk height, asserted at init.
 #   posture, effort   dropped: each under 0.25% of the return under both the
 #             PD baseline and random actions, and actuator force is not a
 #             quantity the real servos report
-#   joint_vel 10x, to -2e-3. Still a placeholder: baseline.py --reward v2
-#             prints every term's share, and the run phase sets this so the
-#             term is ~5% of the return under random actions.
+#   joint_vel -4.2e-2, set from baseline.py --reward v2 on 2026-09-22: at
+#             -2e-3 the term was 0.24% of the random-action return, and the
+#             script asked for 21x to reach the ~5% target. Re-baselined below.
 #   action_rate unchanged; it was the one penalty measured live.
 # The ceiling stays 2.0 per step / 500 per episode. The v1 baseline number
 # does not transfer to v2; baseline.py --reward v2 re-measures it.
@@ -145,7 +145,7 @@ REWARD_V2 = {
     "upright":     1.0,
     "height":      1.0,
     "action_rate": -0.05,
-    "joint_vel":  -2.0e-3,
+    "joint_vel":  -4.2e-2,
 }
 REWARDS = {"v1": REWARD_V1, "v2": REWARD_V2}
 REWARD_WEIGHTS = REWARD_V1      # the default; kept under its step-2 name

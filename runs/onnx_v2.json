@@ -1,0 +1,15 @@
+{
+  "policy": "runs/ppo_v2.pt",
+  "onnx": "runs/policy_v2.onnx",
+  "bytes": 329243,
+  "n_check": 1000,
+  "max_diff_torch_onnx": 2.384185791015625e-06,
+  "max_diff_train_onnx": 5.7220458984375e-06,
+  "verified": true,
+  "onnx_ms_p50": 0.010265500350215007,
+  "onnx_ms_p99": 0.03339261975270347,
+  "torch_ms_p50": 0.026283500119461678,
+  "torch_ms_p99": 0.12837435051551435,
+  "threads": 1,
+  "date": "2026-09-23 00:06"
+}

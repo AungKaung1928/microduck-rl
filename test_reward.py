@@ -21,7 +21,9 @@ def check(name, ok, detail=""):
 print("\n--- v1 is byte-identical to the step-2 reward ---")
 # Both values were computed with the step-2 code before v2 existed, on the
 # same seeds and the same action sequence. They are the regression guard for
-# the 108.7 +- 2.9 baseline.
+# the 108.7 +- 2.9 baseline. Bit-exact, so they are also a guard on the MuJoCo
+# version: the pin is mujoco==3.12.0 and the contact solver moves between
+# releases. A mismatch here with an unpinned MuJoCo is that, not a reward bug.
 e = env.MicroduckEnv(seed=0, reward="v1")
 e.reset(seed=0)
 R = sum(e.step(e.zero_action())[1] for _ in range(e.episode_steps))
@@ -40,7 +42,7 @@ check("v1 term names are the six step-2 terms",
 print("\n--- v2 terms ---")
 check("v2 drops posture and effort, keeps upright, height, action_rate, joint_vel",
       set(env.REWARD_V2) == {"upright", "height", "action_rate", "joint_vel"})
-check("v2 joint_vel is 10x v1", abs(env.REWARD_V2["joint_vel"] / env.REWARD_V1["joint_vel"] - 10) < 1e-9)
+check("v2 joint_vel is -4.2e-2, the weight baseline.py --reward v2 asked for (210x v1)", abs(env.REWARD_V2["joint_vel"] / env.REWARD_V1["joint_vel"] - 210) < 1e-6)
 check("v2 ceiling is still 2.0 per step",
       env.REWARD_V2["upright"] + env.REWARD_V2["height"] == 2.0)
 e = env.MicroduckEnv(seed=0, reward="v2")
