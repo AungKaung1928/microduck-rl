@@ -11,13 +11,14 @@ no hardware to buy. So the whole thing runs the same MJCF in plain CPU MuJoCo,
 parallel across processes, inside an 8-of-14-thread budget on a laptop that
 has other work to do.
 
-**Steps 1 and 2 are measured. Steps 3-5 are code complete and not yet run.**
+**Steps 1 and 2 are measured. Steps 3 and 4 have run their first chunk each, and step 5 is measured on step 3's policy.**
 Step 1 is the feasibility gate: is this machine fast enough to train a policy
 at all. Step 2 is the environment contract — what the policy sees, what it
 emits, when an episode ends — and the baseline it has to beat. Step 3 is PPO
 against that baseline, step 4 domain randomisation evaluated on held-out
-physics, step 5 ONNX export. Every number in the step 3-5 sections is marked
-`TODO(measure)` with the command that produces it, and step 3's first chunk plus the export are now filled in.
+physics, step 5 ONNX export. Steps 3 and 4 have each run their first 25M-step
+chunk of 50M, and step 5 is measured on step 3's chunk-1 policy. Step 4's answer is
+that randomisation, as run here, made the policy worse at standing (see *Step 4 results*).
 
 Step 1's throughput numbers were re-measured on 2026-09-10 and came back 40%
 higher across 8 processes. The original table had been taken on a machine in a
@@ -697,15 +698,15 @@ Step 3 needs a running observation normaliser rather than a better fixed guess.
 2. **Environment contract — done.** 48-dim observation, 14-dim action, 50 Hz,
    fixed-length episodes with seeded pushes, hand-written multiprocess vector
    env, 27 contract tests.
-3. **PPO — code complete, not yet run.** Vectorised PPO from
+3. **PPO — chunk 1 of 2 measured.** Vectorised PPO from
    [ppo-from-scratch](https://github.com/AungKaung1928/ppo-from-scratch) with a
    running observation normaliser, truncation bootstrap and chunked checkpoints,
    against the PD hold-pose baseline under a re-decided reward (below).
    Metric: recovery rate under randomised pushes, 100 episodes x 5 seeds.
-4. **Domain randomisation — code complete, not yet run.** Ranges from the four
+4. **Domain randomisation — chunk 1 measured; it did not help.** Ranges from the four
    measured servo fits; evaluated on `groundcontact_backlash` and `rollers`,
    not `walk_backlash` (see step 4 for why the plan changed). Report the gap.
-5. **ONNX export — code complete, not yet run.** Normaliser folded into the
+5. **ONNX export — measured on the chunk-1 policy.** Normaliser folded into the
    graph, verified against PyTorch on rollout observations, 1-thread p50/p99.
 
 ## Step 3 — the reward decision
@@ -779,7 +780,7 @@ gyro, 0.001 on the orientation quaternion), so `MicroduckEnv(sensor_noise=True)`
 applies them itself — same numbers, applied by the environment instead of the
 simulator. `test_reward.py` checks the gyro moves and nothing else does.
 
-## Step 3 — PPO against the baseline (code complete, not yet run)
+## Step 3 — PPO against the baseline (chunk 1 of 2 measured)
 
 `ppo.py`. The loop from ppo-from-scratch — GAE, orthogonal init, clipped
 surrogate, multi-epoch minibatches, lr anneal — with four things this
@@ -854,7 +855,7 @@ Training rate with the policy in the loop: **3,875 env-steps/s over the first fi
 0.35 default — is a `--action-scale` flag and two more runs; whether it is
 answered or dropped is recorded in `docs/ISSUES.md`.
 
-## Step 4 — domain randomisation and the held-out physics (code complete, not yet run)
+## Step 4 — domain randomisation and the held-out physics (chunk 1 measured 2026-09-23)
 
 **The plan changed, and the reason is finding 1 again.** Step 2 named
 `walk_backlash` as the held-out model. It cannot be: `walk_backlash` is the
@@ -881,28 +882,88 @@ held-out variants rest on the floor and keep the 14-actuator order.
 Nominal values are captured once; `apply` is always relative to the vendored
 model and `restore` puts every array back bit for bit (`test_dr.py`).
 
-### Step 4 results — `TODO(measure)`
+### Step 4 results — chunk 1, measured 2026-09-23
 
 ```bash
 OMP_NUM_THREADS=1 nice -n 10 python ppo.py --total-steps 50000000 --chunk-steps 25000000 --tag v2dr --reward v2 --dr
-OMP_NUM_THREADS=1 nice -n 10 python ppo.py --resume runs/ppo_v2dr.ckpt.pt --tag v2dr
 python eval_gap.py --nominal runs/ppo_v2.pt --dr runs/ppo_v2dr.pt          # -> runs/gap.json
 ```
 
-| trained | evaluated on | recovery | ± seeds | return | gap vs training model |
-|---|---|---|---|---|---|
-| nominal | `groundcontact` | TODO(measure) | | | — |
-| nominal | `groundcontact_backlash` | TODO(measure) | | | TODO(measure) |
-| nominal | `rollers` | TODO(measure) | | | TODO(measure) |
-| DR | `groundcontact` | TODO(measure) | | | — |
-| DR | `groundcontact_backlash` | TODO(measure) | | | TODO(measure) |
-| DR | `rollers` | TODO(measure) | | | TODO(measure) |
+Both policies are chunk 1 of 2: 25M of 50M steps, one training seed, the same
+config apart from `--dr`, with the learning rate annealed to half where the chunk
+stops. The DR run uses `--total-steps 50000000 --chunk-steps 25000000` rather than
+a single 25M run so that its anneal matches the nominal policy's. A 25M total would
+anneal to zero and train a different schedule. It took 2.4 h at
+3,341 env-steps/s on average. Evaluation is 100 episodes x 5 seeds per cell,
+deterministic actions, the same seeds in every cell; ± is the sd of the five
+per-seed means.
 
-The difference between the two gap columns is the number domain
-randomisation is worth on this robot. It may be zero or negative; that is a
-result too.
+| trained | evaluated on | return | upright | survival | trunk height p50 | return gap | upright gap |
+|---|---|---|---|---|---|---|---|
+| nominal | `groundcontact` | 332.6 ± 5.1 | 0.47 ± 0.02 | 0.74 | 0.058 m | — | — |
+| nominal | `groundcontact_backlash` | 317.4 ± 4.3 | 0.38 ± 0.02 | 0.56 | 0.039 m | −15.2 | −0.09 |
+| nominal | `rollers` | 373.6 ± 11.6 | 0.73 ± 0.04 | 0.90 | 0.138 m | +41.1 | +0.26 |
+| DR | `groundcontact` | 312.2 ± 5.7 | 0.28 ± 0.01 | 1.00 | 0.091 m | — | — |
+| DR | `groundcontact_backlash` | 315.4 ± 4.5 | 0.24 ± 0.01 | 0.99 | 0.092 m | +3.2 | −0.04 |
+| DR | `rollers` | 147.3 ± 2.3 | 0.13 ± 0.00 | 0.84 | 0.042 m | −164.9 | −0.15 |
 
-## Step 5 — ONNX export and single-thread latency (code complete, not yet run)
+*Upright* is the fraction of steps with trunk cos above 0.9 (within about 26°).
+*Survival* is the fraction with the trunk above the 4 cm fall height. Trunk height
+is the median of per-episode medians, with 0.12 m standing. Recovery is left out
+of the table because it reads 0.93–1.00 in every cell: 699 to 1,442 of each cell's
+1,500 pushes land on a robot that is already not upright and are excluded by
+definition, the degenerate metric from step 3. It is still in `runs/gap.json`.
+
+**Survival was the wrong metric to read this table by, and the first version of
+`eval_gap.py` led with it.** At survival alone the DR policy looks like a clear
+win: 1.00 against 0.74 on the training model and 0.99 against 0.56 on backlash.
+But survival only asks whether the trunk is above 4 cm. The DR policy is upright
+for 28% of steps against the nominal policy's 47%. Its trunk sits at a median of
+9 cm, and its per-term return confirms it: 134 from the upright term against 183,
+and 189 from height against 167 (`terms_mean` in `runs/gap.json`). **The DR policy learned to brace in
+a low, tilted crouch that never counts as a fall, not to stand.** The nominal
+policy stands more and falls more. Upright fraction and trunk height went into
+`metrics.py` after this was found. The rerun reproduced every return to the
+decimal, and those are the columns above.
+
+What randomisation bought, read off the gaps:
+
+- **Backlash:** the DR policy is insensitive to it (+3.2 return, −0.04 upright);
+  the nominal policy loses 15.2 and 0.09, and its survival drops from 0.74 to
+  0.56. That is the robustness randomisation is supposed to buy, and it did buy
+  it, around a posture that is worse to begin with. The nominal policy on
+  backlash still scores more upright time, 0.38, than the DR policy on the model
+  it trained on, 0.28.
+- **Rollers:** the DR policy collapses. Return falls by 165, and the median trunk
+  sits at 4.2 cm, 2 mm above the fall line, with upright time at 0.13: it spends
+  most episodes down on the passive roller geometry. The nominal policy does
+  *better* on rollers than on its own model (+41 return, +0.26 upright), so for a
+  policy that actually stands, `rollers` is not a harder physics model at all.
+  Why the brace fails there is a hypothesis, not a measurement. Floor friction
+  was randomised at 0.6–1.2x, and a crouch held up by foot friction has nothing
+  to push against on free-rolling contacts.
+- **Net:** on this robot, under reward v2, at 25M steps and one seed, domain
+  randomisation made the policy worse. It is more robust to backlash, much less
+  robust to rollers, and less upright everywhere. That is the answer to the
+  question step 4 was built to ask. It is not what the method is supposed to
+  deliver, so it is reported as it came out.
+
+What it does not settle. Both policies are half-trained, one seed each, and the
+step-size problem from step 3 is present in both. The DR run's clip fraction went
+from 0.52 to 0.63 (median, first 5M against last 5M steps), its approximate KL
+from 0.10 to 0.32, and its policy sd from 0.61 to 0.14. That is milder than the
+nominal run's 0.76 KL, and neither run had `--target-kl`. The likely reading is
+that reward v2's height term is linear in height and independent of tilt. A crouch
+at 9 cm and cos 0.4 earns about 1.2 per step every step, against 2.0 for a stand
+that sometimes ends on the floor at about 0.5. That makes the crouch a safe local
+optimum, and randomisation makes it easier to settle into. Randomised physics
+makes standing harder to learn, and bracing is safe under every sample. Testing
+that means a reward that pays height only when upright, or a stand-time term,
+and that is a new reward version with its own baseline, not a tweak to this one.
+Chunk 2 of either run, `--target-kl 0.02` and more seeds are the other open
+items; none of them is scheduled.
+
+## Step 5 — ONNX export and single-thread latency (measured on the chunk-1 policy)
 
 `export_onnx.py`. One graph from the raw 48-dim observation to the 14-dim
 mean action, with the normaliser folded in — a policy shipped without its
@@ -979,9 +1040,11 @@ python export_onnx.py runs/ppo_v2.pt          # -> runs/policy_v2.onnx, runs/onn
   `/proc/<pid>/stat` twice a fraction of a second apart and reports the rate
   *now*, in percent of one core, warning only above 20% of a core. The
   certified sweep raised no warning under the corrected check.
-- Step 3 has one chunk of two, step 5 is measured on that chunk's policy, and
-  step 4 has not run. Whether DR helps is still `TODO(measure)` above, and the
-  step-3 table will move when the second 25M chunk runs.
+- Steps 3 and 4 each have one chunk of two and one training seed, and step 5
+  is measured on step 3's chunk-1 policy. Step 4 found that randomisation made
+  this policy worse at standing; that is a finding about one seed, half the
+  schedule and one reward, not about domain randomisation in general. Both tables
+  will move if the second 25M chunks run.
 - Run-to-run spread on the certified sweep is about 1% at 8 processes, from
   two runs seven minutes apart. That is not enough samples to call it a
   distribution, and it says nothing about spread across days, where the host

@@ -4,7 +4,10 @@ Three numbers describe a stand-and-recover episode:
 
     return        the sum of per-step rewards (ceiling 500 under both reward
                   versions; the two versions are not comparable to each other)
-    survival      fraction of steps with the trunk above FALL_HEIGHT
+    survival      fraction of steps with the trunk above FALL_HEIGHT. Height
+                  only: a robot braced on its side at 5 cm counts as surviving,
+                  which is why upright_frac and trunk height are reported too
+    upright_frac  fraction of steps with cos > UPRIGHT_COS (about 26 degrees)
     recovery      per push: was the robot upright (cos > UPRIGHT_COS) within
                   RECOVER_WINDOW seconds after the push landed. A push that
                   arrives while the robot is already down cannot be recovered
@@ -27,16 +30,22 @@ RECOVER_WINDOW = 2.0            # s
 def run_episode(e, policy, seed=None):
     """Roll one episode. `policy(obs) -> action`. Returns a metrics dict."""
     obs = e.reset(seed=seed)
-    rewards, fallen, upright, pushed = [], [], [], []
+    rewards, fallen, upright, pushed, heights, terms = [], [], [], [], [], {}
     while True:
         obs, r, done, info = e.step(policy(obs))
         rewards.append(r)
+        heights.append(info["trunk_height"])
+        for k, v in info["terms"].items():
+            terms[k] = terms.get(k, 0.0) + v
         fallen.append(info["fallen"])
         upright.append(info["upright_cos"] > UPRIGHT_COS)
         pushed.append(info["pushed"])
         if done:
             break
-    return summarise(np.array(rewards), np.array(fallen), np.array(upright), np.array(pushed))
+    out = summarise(np.array(rewards), np.array(fallen), np.array(upright), np.array(pushed))
+    out["height_p50"] = float(np.median(heights))
+    out["terms"] = {k: float(v) for k, v in terms.items()}
+    return out
 
 
 def summarise(rewards, fallen, upright, pushed):
@@ -77,6 +86,11 @@ def aggregate(episodes):
         "n_episodes": len(episodes),
         "return_mean": float(ret.mean()), "return_std": float(ret.std(ddof=1)) if ret.size > 1 else 0.0,
         "survival_mean": float(surv.mean()), "survival_std": float(surv.std(ddof=1)) if surv.size > 1 else 0.0,
+        "upright_mean": float(np.mean([e["upright_frac"] for e in episodes])),
+        "height_p50": float(np.median([e["height_p50"] for e in episodes if "height_p50" in e]))
+        if any("height_p50" in e for e in episodes) else None,
+        "terms_mean": {k: float(np.mean([e["terms"][k] for e in episodes]))
+                       for k in (episodes[0].get("terms") or {})} if episodes else {},
         "pushes_valid": int(valid),
         "pushes_unrecoverable": int(sum(e["pushes_unrecoverable"] for e in episodes)),
         "recovery_rate": float(rec / valid) if valid else float("nan"),

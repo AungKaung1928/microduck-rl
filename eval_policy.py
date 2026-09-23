@@ -39,6 +39,8 @@ def run(policy_fn_factory, variant, reward, episodes, seeds, action_scale):
     agg = metrics.aggregate(eps_all)
     agg["per_seed_return"] = [p["return_mean"] for p in per_seed]
     agg["per_seed_recovery"] = [p["recovery_rate"] for p in per_seed]
+    agg["per_seed_upright"] = [p["upright_mean"] for p in per_seed]
+    agg["seed_std_upright"] = float(np.std(agg["per_seed_upright"], ddof=1)) if len(seeds) > 1 else 0.0
     agg["seed_std_return"] = float(np.std(agg["per_seed_return"], ddof=1)) if len(seeds) > 1 else 0.0
     agg["seed_std_recovery"] = float(np.nanstd(agg["per_seed_recovery"], ddof=1)) if len(seeds) > 1 else 0.0
     return agg
