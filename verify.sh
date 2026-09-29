@@ -104,18 +104,18 @@ CPU throughput (the step-1 gate, ~4 min):
     nice -n 10 $PY bench.py --seconds 20 --ref-seconds 10 --tag main
     nice -n 10 $PY bench.py --sustained 8 --variant groundcontact --windows 18 --tag gc_sustained
 
-Step 3, 50M env steps in two chunks of ~1 h at ~13,300 env-steps/s:
+Step 3, 50M env steps in two chunks of ~2 h each at the measured 3,300-3,700 env-steps/s:
     OMP_NUM_THREADS=1 nice -n 10 $PY ppo.py --total-steps 50000000 --chunk-steps 25000000 --tag v2 --reward v2
-    OMP_NUM_THREADS=1 nice -n 10 $PY ppo.py --resume runs/ppo_v2.ckpt.pt --tag v2
+    OMP_NUM_THREADS=1 nice -n 10 $PY ppo.py --resume runs/ppo_v2.ckpt.pt --tag v2 --target-kl 0.02
     $PY eval_policy.py runs/ppo_v2.pt --variant groundcontact
 
 Step 4, the same with domain randomisation, then the gap table:
     OMP_NUM_THREADS=1 nice -n 10 $PY ppo.py --total-steps 50000000 --chunk-steps 25000000 --tag v2dr --reward v2 --dr
     OMP_NUM_THREADS=1 nice -n 10 $PY ppo.py --resume runs/ppo_v2dr.ckpt.pt --tag v2dr
-    $PY eval_gap.py --nominal runs/ppo_v2.pt --dr runs/ppo_v2dr.pt
+    $PY eval_gap.py --nominal runs/ppo_v2_chunk1.pt --dr runs/ppo_v2dr.pt
 
 Step 5, export and single-thread latency (seconds, one core):
-    $PY export_onnx.py runs/ppo_v2.pt
+    $PY export_onnx.py runs/ppo_v2_chunk1.pt
 
 A 90-second smoke of the training loop, no numbers worth keeping:
     OMP_NUM_THREADS=1 nice -n 10 $PY ppo.py --total-steps 4096 --num-envs 2 --num-steps 128 --tag smoke

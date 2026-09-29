@@ -1,0 +1,73 @@
+{
+ "policy": "runs/ppo_v2.pt",
+ "variant": "groundcontact",
+ "reward": "v2",
+ "trained_on": "groundcontact",
+ "dr": false,
+ "episodes": 100,
+ "seeds": [
+  0,
+  1,
+  2,
+  3,
+  4
+ ],
+ "learned": {
+  "n_episodes": 500,
+  "return_mean": 332.5798928540303,
+  "return_std": 54.60925058550099,
+  "survival_mean": 0.743184,
+  "survival_std": 0.2739982705209962,
+  "pushes_valid": 801,
+  "pushes_unrecoverable": 699,
+  "recovery_rate": 0.9950062421972534,
+  "recover_p50_s": 0.0,
+  "recover_p90_s": 0.0,
+  "per_seed_return": [
+   336.35546248307145,
+   325.3695833370142,
+   337.28781543382144,
+   329.2435892749676,
+   334.64301374127683
+  ],
+  "per_seed_recovery": [
+   0.9939024390243902,
+   0.9936708860759493,
+   0.9938650306748467,
+   1.0,
+   0.9939024390243902
+  ],
+  "seed_std_return": 5.094001711309039,
+  "seed_std_recovery": 0.002758656881682806
+ },
+ "pd": {
+  "n_episodes": 500,
+  "return_mean": 175.83647860052122,
+  "return_std": 3.6025303878583,
+  "survival_mean": 0.465424,
+  "survival_std": 0.042476684916822854,
+  "pushes_valid": 57,
+  "pushes_unrecoverable": 1443,
+  "recovery_rate": 0.8771929824561403,
+  "recover_p50_s": 0.0,
+  "recover_p90_s": 0.0,
+  "per_seed_return": [
+   175.94037367181733,
+   175.40003770096038,
+   175.91251631964835,
+   176.00927153765716,
+   175.92019377252294
+  ],
+  "per_seed_recovery": [
+   0.5,
+   0.8666666666666667,
+   0.9166666666666666,
+   1.0,
+   0.9285714285714286
+  ],
+  "seed_std_return": 0.2469424065073132,
+  "seed_std_recovery": 0.19723427831950938
+ },
+ "wall_s": 70.42326376299934,
+ "date": "2026-09-23 00:05"
+}

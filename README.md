@@ -11,13 +11,13 @@ no hardware to buy. So the whole thing runs the same MJCF in plain CPU MuJoCo,
 parallel across processes, inside an 8-of-14-thread budget on a laptop that
 has other work to do.
 
-**Steps 1 and 2 are measured. Steps 3 and 4 have run their first chunk each, and step 5 is measured on step 3's policy.**
+**Steps 1 and 2 are measured. Step 3 has run its full 50M steps (344.8 against the PD baseline's 175.8), step 4 its first 25M-step chunk, and step 5 is measured on step 3's chunk-1 policy.**
 Step 1 is the feasibility gate: is this machine fast enough to train a policy
 at all. Step 2 is the environment contract — what the policy sees, what it
 emits, when an episode ends — and the baseline it has to beat. Step 3 is PPO
 against that baseline, step 4 domain randomisation evaluated on held-out
-physics, step 5 ONNX export. Steps 3 and 4 have each run their first 25M-step
-chunk of 50M, and step 5 is measured on step 3's chunk-1 policy. Step 4's answer is
+physics, step 5 ONNX export. Step 3 has run both 25M-step chunks, step 4 the
+first of its two, and step 5 is measured on step 3's chunk-1 policy. Step 4's answer is
 that randomisation, as run here, made the policy worse at standing (see *Step 4 results*).
 
 Step 1's throughput numbers were re-measured on 2026-09-10 and came back 40%
@@ -698,7 +698,7 @@ Step 3 needs a running observation normaliser rather than a better fixed guess.
 2. **Environment contract — done.** 48-dim observation, 14-dim action, 50 Hz,
    fixed-length episodes with seeded pushes, hand-written multiprocess vector
    env, 27 contract tests.
-3. **PPO — chunk 1 of 2 measured.** Vectorised PPO from
+3. **PPO — measured, 50M steps in two chunks.** Vectorised PPO from
    [ppo-from-scratch](https://github.com/AungKaung1928/ppo-from-scratch) with a
    running observation normaliser, truncation bootstrap and chunked checkpoints,
    against the PD hold-pose baseline under a re-decided reward (below).
@@ -780,7 +780,7 @@ gyro, 0.001 on the orientation quaternion), so `MicroduckEnv(sensor_noise=True)`
 applies them itself — same numbers, applied by the environment instead of the
 simulator. `test_reward.py` checks the gyro moves and nothing else does.
 
-## Step 3 — PPO against the baseline (chunk 1 of 2 measured)
+## Step 3 — PPO against the baseline (both chunks measured)
 
 `ppo.py`. The loop from ppo-from-scratch — GAE, orthogonal init, clipped
 surrogate, multi-epoch minibatches, lr anneal — with four things this
@@ -827,8 +827,7 @@ measures it.
 
 ```bash
 OMP_NUM_THREADS=1 nice -n 10 python ppo.py --total-steps 50000000 --chunk-steps 25000000 --tag v2 --reward v2
-OMP_NUM_THREADS=1 nice -n 10 python ppo.py --resume runs/ppo_v2.ckpt.pt --tag v2 --target-kl 0.02   # chunk 2, see below
-python eval_policy.py runs/ppo_v2.pt --variant groundcontact       # -> runs/eval_v2_groundcontact.json
+python eval_policy.py runs/ppo_v2_chunk1.pt --variant groundcontact   # -> runs/eval_v2_groundcontact.json, kept as runs/eval_v2_chunk1_groundcontact.json
 ```
 
 100 episodes × 5 seeds, deterministic (mean) actions, PD baseline on the
@@ -836,7 +835,7 @@ same seeds:
 
 | policy | return (± over seeds) | survival | recovery (± over seeds) | recover p50 / p90 s | pushes on a fallen robot |
 |---|---|---|---|---|---|
-| PPO v2, chunk 1 = 25M of 50M steps | 332.6 ± 5.1 | 0.74 | 1.00 ± 0.00 | 0.00 / 0.00 | 699 |
+| PPO v2, chunk 1 = 25M of 50M steps (`runs/ppo_v2_chunk1.pt`) | 332.6 ± 5.1 | 0.74 | 1.00 ± 0.00 | 0.00 / 0.00 | 699 |
 | PD hold-pose, reward v2 | 175.8 ± 0.2 | 0.47 | 0.88 ± 0.20 | 0.00 / 0.00 | 1443 |
 
 Read the recovery column with its time-to-recover. A push counts as recovered if
@@ -851,9 +850,32 @@ robot against 1,443 for PD, so the learned policy was down less than half as
 often. What neither policy has demonstrated is getting up after a fall; pushes
 strong enough to knock the learned policy over are a follow-up run, not a claim.
 
-Training rate with the policy in the loop: **3,875 env-steps/s over the first five updates, 3,139 over the last five** (`runs/ppo_v2.json`; the chunk took 2.4 h). That is a quarter of the 13,300 the budget assumed; the main process, one Python thread doing eight pipe round trips and a batch-8 forward pass per step, sat at 76% of one core while each worker idled 80% of the time. The log's throughput warning fires when the last three updates average under 80% of the first five. It fired on 4,296 of the 12,208 updates: 9% of the first 2,000, then 84% of the last 4,000, as the mean rate fell from 3,407 to 3,024 env-steps/s. The box check at the start recorded a 1-minute load of 0.64 and nothing else ran for the whole chunk, so the decay is the package's power limit rather than contention, but WSL cannot read the die temperature, so that is read off the shape of the decay and not measured. The rule is also too tight for a 2.4-hour run: five warm updates are not a fair baseline for hour three, which is why the warning stops carrying information after the first thousand updates. The step size is the finding of this chunk. The clip fraction was 0.48 (median) over the first 5M steps and 0.73 over the last 5M; the approximate KL went from a median of 0.07 to 0.76 with spikes above 50; the policy's standard deviation shrank from 0.61 at the first update to 0.08 at the last. The return did not follow. The rolling 50-episode return peaked at 374 near 7.8M steps and averaged 337 / 342 / 332 / 332 / 328 over the five 5M-step blocks, and the in-loop evaluation averaged 354 with 0.83 survival over the first 5M steps against 330 with 0.69 over the last 5M (`runs/ppo_v2.json`, `evals`). Read those as block means: a single evaluation is 20 episodes and the last seven of them span 346 down to 313, so no pair of individual rows is evidence of anything. After roughly 5M steps every update moved the policy further than the clipped objective is meant to allow, and the extra distance bought nothing. Chunk 2 (`--resume`) has not run; when it does, an approximate-KL stop on the epoch loop (0.02 is the usual figure) or a learning rate of 1e-4 goes in first, because resuming with the same settings would spend two more hours making the same mistake. Both exist as flags now, added after this chunk and off by default: `--target-kl 0.02` ends an update's epoch loop once the previous epoch's mean approximate KL exceeds the figure, `--lr 1e-4` lowers the step, and `--resume` honours both (everything else in the config still comes from the checkpoint). The anneal is on by default and is driven by the update counter, so a resume at update 12,208 of 24,414 starts at half of whatever `--lr` says and reaches zero at the last update; `--no-anneal-lr` is honoured on a resume as well, for a flat step. The action-scale question step 2 left open — 0.2 and 0.5 against the
+Training rate with the policy in the loop: **3,875 env-steps/s over the first five updates, 3,139 over the last five** (`runs/ppo_v2_chunk1.json`, the chunk-1 copy; the chunk took 2.4 h). That is a quarter of the 13,300 the budget assumed; the main process, one Python thread doing eight pipe round trips and a batch-8 forward pass per step, sat at 76% of one core while each worker idled 80% of the time. The log's throughput warning fires when the last three updates average under 80% of the first five. It fired on 4,296 of the 12,208 updates: 9% of the first 2,000, then 84% of the last 4,000, as the mean rate fell from 3,407 to 3,024 env-steps/s. The box check at the start recorded a 1-minute load of 0.64 and nothing else ran for the whole chunk, so the decay is the package's power limit rather than contention, but WSL cannot read the die temperature, so that is read off the shape of the decay and not measured. The rule is also too tight for a 2.4-hour run: five warm updates are not a fair baseline for hour three, which is why the warning stops carrying information after the first thousand updates. The step size is the finding of this chunk. The clip fraction was 0.48 (median) over the first 5M steps and 0.73 over the last 5M; the approximate KL went from a median of 0.07 to 0.76 with spikes above 50; the policy's standard deviation shrank from 0.61 at the first update to 0.08 at the last. The return did not follow. The rolling 50-episode return peaked at 374 near 7.8M steps and averaged 337 / 342 / 332 / 332 / 328 over the five 5M-step blocks, and the in-loop evaluation averaged 354 with 0.83 survival over the first 5M steps against 330 with 0.69 over the last 5M (`runs/ppo_v2_chunk1.json`, `evals`). Read those as block means: a single evaluation is 20 episodes and the last seven of them span 346 down to 313, so no pair of individual rows is evidence of anything. After roughly 5M steps every update moved the policy further than the clipped objective is meant to allow, and the extra distance bought nothing. So chunk 2 did not resume with the same settings, which would have spent two more hours making the same mistake; it resumed with an approximate-KL stop on the epoch loop (0.02, the usual figure), measured below. Both exist as flags now, added after this chunk and off by default: `--target-kl 0.02` ends an update's epoch loop once the previous epoch's mean approximate KL exceeds the figure, `--lr 1e-4` lowers the step, and `--resume` honours both (everything else in the config still comes from the checkpoint). The anneal is on by default and is driven by the update counter, so a resume at update 12,208 of 24,414 starts at half of whatever `--lr` says and reaches zero at the last update; `--no-anneal-lr` is honoured on a resume as well, for a flat step. The action-scale question step 2 left open — 0.2 and 0.5 against the
 0.35 default — is a `--action-scale` flag and two more runs; whether it is
 answered or dropped is recorded in `docs/ISSUES.md`.
+
+### Step 3 results — chunk 2 (25M to 50M steps, `--target-kl 0.02`), measured 2026-09-29
+
+```bash
+OMP_NUM_THREADS=1 nice -n 10 python ppo.py --resume runs/ppo_v2.ckpt.pt --tag v2 --target-kl 0.02 --chunk-steps 12500000   # run until 50M
+python eval_policy.py runs/ppo_v2.pt --variant groundcontact       # -> runs/eval_v2_groundcontact.json
+```
+
+Same evaluation as chunk 1: 100 episodes × 5 seeds, the same five seeds, deterministic actions.
+
+| policy | return (± over seeds) | survival | upright fraction (± over seeds) | recovery (± over seeds) | recover p50 / p90 s | pushes on a fallen robot |
+|---|---|---|---|---|---|---|
+| PPO v2, 50M steps (`runs/ppo_v2.pt`) | 344.8 ± 2.9 | 0.73 | 0.50 ± 0.01 | 0.99 ± 0.00 | 0.00 / 0.00 | 629 |
+| PPO v2, chunk 1 = 25M steps | 332.6 ± 5.1 | 0.74 | 0.47 ± 0.02 | 1.00 ± 0.00 | 0.00 / 0.00 | 699 |
+| PD hold-pose, reward v2 | 175.8 ± 0.2 | 0.47 | — | 0.88 ± 0.20 | 0.00 / 0.00 | 1443 |
+
+The chunk-1 upright fraction is the nominal cell of the step-4 table, the same policy on the same seeds.
+
+What chunk 2 bought: **+12.2 return on the same seeds, and every seed went up** (per-seed gains 10.4, 16.0, 11.3, 14.6 and 8.6, `per_seed_return` in the two eval files). Survival did not follow: 0.73 against 0.74, a difference of about 1.3 standard errors of the 500-episode mean. The upright fraction rose from 0.47 to 0.50 and the push count on a fallen robot fell from 699 to 629, so the gain is a little more time standing, not a new behaviour. The median trunk height is 5.9 cm, the same as chunk 1's 5.8 cm, and half the steps are still spent outside the upright band. Recovery reads the same way as in chunk 1: 7 of the 871 pushes on the standing robot were not recovered inside 2 s and the rest never moved the trunk out of the band. Getting up after a fall is still not demonstrated.
+
+The KL stop did what it was put in for. Over chunk 1 the mean approximate KL per update was 0.53 and the mean clip fraction 0.66. Over chunk 2 they were 0.032 and 0.28, and the largest KL was 0.24 against 173. The clip fraction's median was 0.40 over the first 5M steps of chunk 2 and 0.16 over the last 5M, and σ stayed near 0.08 to 0.09 instead of collapsing further. The logged KL is the last epoch's, taken after the stop, which is why 76% of updates log above 0.02. The rolling 50-episode return averaged 331 / 332 / 337 / 344 / 347 over the five 5M-step blocks of chunk 2, against chunk 1's flat-to-falling 337 / 342 / 332 / 332 / 328. Chunk 2 has two confounds, and this run does not separate them. The learning rate anneals from half to zero over the same span, so the late steps are small for two reasons, not one. And there is no chunk 2 without the KL stop to compare against. The honest claim is that chunk 2 improved on chunk 1 with the stop in place, not that the stop caused all of it.
+
+Wall-clock: chunk 2 ran as three invocations, which is why the `--chunk-steps 12500000` is there. The first ran 58 min on 2026-09-25 (25.0M to 37.6M, 4,344 env-steps/s mean). The second was stopped by hand after about 4 minutes, just after its checkpoint at 38.52M; three updates were lost and trained again. The third ran 60 min on 2026-09-29 (38.5M to 50.0M, 3,700 mean, 3,289 over the first five updates and 3,847 over the last five). The runner rests the machine for 30 minutes after each 2.5 h of work, and the chunks were under an hour each. The throughput warning fired on 86 of 12,207 updates, against 4,296 of 12,208 in the single 2.4-hour chunk 1. That is further evidence that chunk 1's decay was heat or power and not the code. `runs/ppo_v2.json` holds the whole 50M-step trace and eval history. The chunk-1 policy, its training record and its evaluation are kept as `runs/ppo_v2_chunk1.pt`, `runs/ppo_v2_chunk1.json` and `runs/eval_v2_chunk1_groundcontact.json`, byte-identical to what was committed at chunk 1. Steps 4 and 5 were measured on that file. `runs/gap.json` and `runs/onnx_v2.json` still name it `runs/ppo_v2.pt`, which was that file's name when they were written.
 
 ## Step 4 — domain randomisation and the held-out physics (chunk 1 measured 2026-09-23)
 
@@ -886,7 +908,7 @@ model and `restore` puts every array back bit for bit (`test_dr.py`).
 
 ```bash
 OMP_NUM_THREADS=1 nice -n 10 python ppo.py --total-steps 50000000 --chunk-steps 25000000 --tag v2dr --reward v2 --dr
-python eval_gap.py --nominal runs/ppo_v2.pt --dr runs/ppo_v2dr.pt          # -> runs/gap.json
+python eval_gap.py --nominal runs/ppo_v2_chunk1.pt --dr runs/ppo_v2dr.pt   # -> runs/gap.json
 ```
 
 Both policies are chunk 1 of 2: 25M of 50M steps, one training seed, the same
@@ -960,8 +982,9 @@ optimum, and randomisation makes it easier to settle into. Randomised physics
 makes standing harder to learn, and bracing is safe under every sample. Testing
 that means a reward that pays height only when upright, or a stand-time term,
 and that is a new reward version with its own baseline, not a tweak to this one.
-Chunk 2 of either run, `--target-kl 0.02` and more seeds are the other open
-items; none of them is scheduled.
+Chunk 2 of the DR run and more seeds are the other open items; neither is
+scheduled. The nominal run's chunk 2 did run, with `--target-kl 0.02` (step 3),
+but this table stays on chunk 1 against chunk 1 so that both columns have had the same training.
 
 ## Step 5 — ONNX export and single-thread latency (measured on the chunk-1 policy)
 
@@ -976,7 +999,7 @@ the un-normalised actor and agrees with the training-time path.
 ### Step 5 results — on the chunk-1 policy, measured 2026-09-23
 
 ```bash
-python export_onnx.py runs/ppo_v2.pt          # -> runs/policy_v2.onnx, runs/onnx_v2.json
+python export_onnx.py runs/ppo_v2_chunk1.pt   # -> runs/policy_v2.onnx, runs/onnx_v2.json
 ```
 
 | | value |
@@ -1010,7 +1033,8 @@ python export_onnx.py runs/ppo_v2.pt          # -> runs/policy_v2.onnx, runs/onn
   eight pipe round trips per step and the policy forward pass were never in
   the composition. [mujoco-vecenv-cpp](https://github.com/AungKaung1928/mujoco-vecenv-cpp)
   measured the same env from the other side and put the Python vector env at
-  about 6,400 env-steps/s under random actions at 8 processes. Treat any
+  about 6,400 env-steps/s under random actions at 8 processes; its rerun of
+  step 3 on its C++ env took 3.1 h for 50M steps against 4.4 h here. Treat any
   number here as provisional until a script in this repo reproduces it on the
   workload it is quoted for, and note that the conservative direction was
   wrong too — a safety factor applied to a number that already contains it is
@@ -1040,11 +1064,12 @@ python export_onnx.py runs/ppo_v2.pt          # -> runs/policy_v2.onnx, runs/onn
   `/proc/<pid>/stat` twice a fraction of a second apart and reports the rate
   *now*, in percent of one core, warning only above 20% of a core. The
   certified sweep raised no warning under the corrected check.
-- Steps 3 and 4 each have one chunk of two and one training seed, and step 5
-  is measured on step 3's chunk-1 policy. Step 4 found that randomisation made
-  this policy worse at standing; that is a finding about one seed, half the
-  schedule and one reward, not about domain randomisation in general. Both tables
-  will move if the second 25M chunks run.
+- Every policy here comes from one training seed. Step 3 ran its full 50M steps;
+  step 4 has one chunk of two, and step 4's gap table and step 5 are measured on
+  step 3's chunk-1 policy so that they compare like with like. Step 4 found that
+  randomisation made this policy worse at standing; that is a finding about one
+  seed, half the schedule and one reward, not about domain randomisation in
+  general. The gap table would move if the DR run's second chunk ran.
 - Run-to-run spread on the certified sweep is about 1% at 8 processes, from
   two runs seven minutes apart. That is not enough samples to call it a
   distribution, and it says nothing about spread across days, where the host
@@ -1076,7 +1101,7 @@ docker run --rm microduck-rl bash -c './fetch_assets.sh && ./verify.sh'
 
 Image built on 2026-09-23 and its default command passed inside it (22 checks across the PPO and export test files), image size 1.87 GB.
 
-`runs/ppo_v2.pt` (the chunk-1 policy, 648 KB), `runs/policy_v2.onnx` (329 KB) and every
+`runs/ppo_v2.pt` (the 50M-step policy) and `runs/ppo_v2_chunk1.pt` (the chunk-1 policy steps 4 and 5 used), 648 KB each, `runs/policy_v2.onnx` (329 KB) and every
 `runs/*.json` the tables quote are tracked, so the evaluation and export lines above run
 from a clone without training. The resume checkpoint and the training log are not.
 
