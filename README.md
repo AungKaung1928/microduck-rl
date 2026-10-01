@@ -1064,7 +1064,12 @@ python export_onnx.py runs/ppo_v2_chunk1.pt   # -> runs/policy_v2.onnx, runs/onn
   `/proc/<pid>/stat` twice a fraction of a second apart and reports the rate
   *now*, in percent of one core, warning only above 20% of a core. The
   certified sweep raised no warning under the corrected check.
-- Every policy here comes from one training seed. Step 3 ran its full 50M steps;
+- Every policy here comes from one training seed, except step 3's final run:
+  [mujoco-vecenv-cpp](https://github.com/AungKaung1928/mujoco-vecenv-cpp) repeated
+  it on seeds 1 and 2 (`runs/ppo_v2_s1.pt`, `runs/ppo_v2_s2.pt`, same protocol in
+  12.5M-step invocations). They score 357.3 ± 7.6 and 342.2 ± 5.1 with survival
+  0.999 and 0.895, so the 0.73 survival above is the low draw of three
+  (mean 348.1 ± 8.1, survival 0.87 ± 0.14). Step 3 ran its full 50M steps;
   step 4 has one chunk of two, and step 4's gap table and step 5 are measured on
   step 3's chunk-1 policy so that they compare like with like. Step 4 found that
   randomisation made this policy worse at standing; that is a finding about one
