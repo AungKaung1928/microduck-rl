@@ -5,6 +5,55 @@ the [Microduck](https://github.com/pollen-robotics/microduck_rl) — a 25 cm,
 737 g open-source biped with 14 position-controlled servos — trained in MuJoCo,
 evaluated on physics it never trained on, and exported to ONNX.
 
+**Walkthrough:** https://aungkaung1928.github.io/projects/microduck-rl.html — the same project explained end to end, file by file.
+
+## At a glance
+
+Five steps, each gated by a measurement. Node text is the measured result; every number is reproduced in the folded sections below.
+
+```mermaid
+flowchart LR
+    S1["Step 1 — feasibility gate<br/>28,749 env-steps/s burst, 8 processes (gate 5,000: PASS, 5.7x)<br/>sustained budget ~13,300; with the policy in the loop 3,139–3,875"]
+    S2["Step 2 — environment contract<br/>48-dim obs (sensors the robot has), 14-dim action, 50 Hz, 250-step episodes<br/>PD baseline 108.7 ± 2.9 (reward v1), topples in 0.79 s"]
+    S3["Step 3 — reward v2 + PPO, 50M steps<br/>return 344.8 ± 2.9 vs PD 175.8 ± 0.2 of 500<br/>survival 0.73 vs 0.47; KL stop cut mean KL 0.53 → 0.032"]
+    S4["Step 4 — domain randomisation, 25M vs 25M<br/>NEGATIVE: upright 0.28 vs 0.47 on groundcontact<br/>rollers 147.3 vs 373.6 return; backlash +3.2 vs −15.2"]
+    S5["Step 5 — ONNX export<br/>max torch–onnx diff 2.4e-06 over 1,000 rollout obs<br/>p50 / p99 0.010 / 0.033 ms, 0.2% of the 20 ms period"]
+    S1 --> S2 --> S3 --> S4
+    S3 --> S5
+```
+
+The baseline the policy has to beat. The shipped PD controller holding the STAND keyframe on `groundcontact` (5 s filmstrip): it holds for 0.79 s, topples, and settles face-down at 4.30 s.
+
+![hold drop](out/drop_groundcontact_hold.png)
+
+### Results
+
+| method | metric | value | condition |
+|---|---|---|---|
+| PD hold-pose, reward v2 | return (of 500) | 175.8 ± 0.2 | `groundcontact`, 100 episodes × 5 seeds, pushes 0.15–0.45 m/s |
+| PPO v2, 25M steps (chunk 1) | return | 332.6 ± 5.1 | same seeds; survival 0.74, upright 0.47 ± 0.02 |
+| PPO v2, 50M steps (`--target-kl 0.02` in chunk 2) | return | 344.8 ± 2.9 | same seeds; survival 0.73, upright 0.50 ± 0.01, median trunk 5.9 cm |
+| PPO v2 seeds 1, 2 (via mujoco-vecenv-cpp) | return | 357.3 ± 7.6 / 342.2 ± 5.1 | same protocol; 3-seed mean 348.1 ± 8.1, survival 0.87 ± 0.14 |
+| nominal 25M → `groundcontact_backlash` | return / upright gap | −15.2 / −0.09 | held-out physics, survival 0.74 → 0.56 |
+| nominal 25M → `rollers` | return / upright gap | +41.1 / +0.26 | held-out physics, 373.6 ± 11.6 |
+| DR 25M → `groundcontact` | return, upright | 312.2 ± 5.7, 0.28 ± 0.01 | training model; survival 1.00 but median trunk 9.1 cm (crouch) |
+| DR 25M → `groundcontact_backlash` | return / upright gap | +3.2 / −0.04 | held-out physics |
+| DR 25M → `rollers` | return / upright gap | −164.9 / −0.15 | held-out physics, 147.3 ± 2.3 |
+| ONNX vs torch | max abs difference | 2.4e-06 | 1,000 rollout observations, normaliser folded into the graph |
+| ONNX Runtime | p50 / p99 latency | 0.010 / 0.033 ms | 1 intra-op thread, batch 1; torch eager 0.026 / 0.128 ms |
+| CPU physics, `walk`, 8 processes | env-steps/s | 28,749 burst, ~19,400 after 4 min | 20 s windows; 55% scaling efficiency |
+| training loop, 8 workers | env-steps/s | 3,875 → 3,139 (chunk 1) | 2.4 h per 25M steps; 50M = 4.4 h |
+
+### Key points
+
+- **PPO doubles the PD baseline on the same seeds.** 344.8 ± 2.9 against 175.8 ± 0.2 return of 500 at 50M steps, survival 0.73 against 0.47, and 629 pushes landing on an already-fallen robot against 1,443; chunk 2 raised every seed (+8.6 to +16.0) after a `--target-kl 0.02` stop brought the mean approximate KL from 0.53 to 0.032 and the clip fraction from 0.66 to 0.28.
+- **Domain randomisation made the policy worse.** At 25M steps against 25M, the DR policy is upright 0.28 of steps against the nominal 0.47 on the training model, scores 147.3 against 373.6 on `rollers`, and holds a 9 cm crouch that never counts as a fall; the one gain is backlash insensitivity, +3.2 return against the nominal −15.2.
+- **Getting up after a fall is not demonstrated.** The 0.99–1.00 recovery figure measures push resistance: 7 of 871 pushes on the standing 50M policy were not recovered inside 2 s and the rest never moved the trunk out of the band, while half of all steps are spent outside it at a median trunk height of 5.9 cm against 12 cm standing.
+- **The throughput figure was wrong five times.** 28,749 → 18,400 → 8,000 → 13,300 → ~3,300 env-steps/s once the policy was in the loop, so 50M steps took 4.4 h rather than the budgeted 1.0 h; the host power state alone moved the burst number by 40%, and WSL2 cannot read it.
+- **The exported policy costs 0.2% of the control period.** ONNX agrees with torch to 2.4e-06 over 1,000 rollout observations with the normaliser inside the graph, and runs 0.010 / 0.033 ms p50 / p99 on one thread against a 20 ms control step.
+
+<details><summary><b>Background, scope, step list, and what is not proven</b></summary>
+
 The reason this project exists in this form: upstream trains the duck with
 mjlab on MuJoCo Warp, which requires CUDA. There is no GPU on this machine and
 no hardware to buy. So the whole thing runs the same MJCF in plain CPU MuJoCo,
@@ -25,9 +74,112 @@ higher across 8 processes. The original table had been taken on a machine in a
 reduced-power state that is not visible from inside WSL. Both tables are kept
 below, because the difference between them is the useful part.
 
----
+## Scope, now that the gate has been measured
 
-**Walkthrough:** https://aungkaung1928.github.io/projects/microduck-rl.html — the same project explained end to end, file by file.
+- **In:** stand and recover from pushes, on `groundcontact`, ~50M env steps.
+  **1.0 h** at the measured rate. One comfortable sitting, checkpointed
+  anyway.
+- **In:** domain randomisation over the four measured actuator classes,
+  evaluated on `walk_backlash` as held-out physics.
+- **In, was previously deferred:** a walking gait, 400M steps. **8.4 h,
+  five chunks** of ≤2 h, against the 36 h that had put it out of reach. The
+  estimate moved four times while the scope conclusion never did, which is the
+  only reason the moving was tolerable.
+- **Out:** anything requiring mjlab, MuJoCo Warp, or a GPU.
+
+## Steps
+
+1. **Feasibility gate — done.** Asset fetch, model inspection, CPU throughput,
+   drop tests. This README.
+2. **Environment contract — done.** 48-dim observation, 14-dim action, 50 Hz,
+   fixed-length episodes with seeded pushes, hand-written multiprocess vector
+   env, 27 contract tests.
+3. **PPO — measured, 50M steps in two chunks.** Vectorised PPO from
+   [ppo-from-scratch](https://github.com/AungKaung1928/ppo-from-scratch) with a
+   running observation normaliser, truncation bootstrap and chunked checkpoints,
+   against the PD hold-pose baseline under a re-decided reward (below).
+   Metric: recovery rate under randomised pushes, 100 episodes x 5 seeds.
+4. **Domain randomisation — chunk 1 measured; it did not help.** Ranges from the four
+   measured servo fits; evaluated on `groundcontact_backlash` and `rollers`,
+   not `walk_backlash` (see step 4 for why the plan changed). Report the gap.
+5. **ONNX export — measured on the chunk-1 policy.** Normaliser folded into the
+   graph, verified against PyTorch on rollout observations, 1-thread p50/p99.
+
+## What steps 1 and 2 do not prove
+
+- Nothing here trains anything. Throughput is measured with random actions
+  around STAND. A real PPO loop adds policy forward passes, advantage
+  computation and optimiser steps on top, so the measured rate is an upper
+  bound on the rollout half only, not on training.
+- **The 13,300 env-steps/s budget figure was the rollout physics, not the
+  training loop.** It is a directly measured sustained 8-process
+  `groundcontact` rate times a single-core wrapper cost. Step 3 measured the
+  loop itself at roughly a quarter of that; the bullet below has the chain.
+- **Neither sustained run reached a steady state.** `walk` was still falling
+  −1.0% per window after twelve; `groundcontact` bottomed out at window 11 and
+  was still climbing +0.6% after eighteen. The 9% plateau band on the latter
+  is the honest uncertainty on the budget rate, and `--windows 30` is what
+  would close it.
+- **This README's throughput figure has been wrong five times: 28,749,
+  18,400, 8,000, 13,300, and now about 3,300 with a policy in the loop.**
+  Three corrections downward from unmeasured optimism, one upward from
+  stacking two derates on the same effect, and a fifth downward when step 3
+  finally ran the thing itself: `ppo.py` reports 3,000–3,750 env-steps/s
+  (see *Step 3 results*). The 13,300 was bare physics × a wrapper factor; the
+  eight pipe round trips per step and the policy forward pass were never in
+  the composition. [mujoco-vecenv-cpp](https://github.com/AungKaung1928/mujoco-vecenv-cpp)
+  measured the same env from the other side and put the Python vector env at
+  about 6,400 env-steps/s under random actions at 8 processes; its rerun of
+  step 3 on its C++ env took 3.1 h for 50M steps against 4.4 h here. Treat any
+  number here as provisional until a script in this repo reproduces it on the
+  workload it is quoted for, and note that the conservative direction was
+  wrong too — a safety factor applied to a number that already contains it is
+  not caution, it is an error.
+- The 0.79 s fall time is one deterministic rollout from one keyframe. It is a
+  baseline to beat, not a distribution. The 108.9 ± 2.8 return is the
+  distributional version of it, over 20 seeds, and that is the number step 3
+  should be compared against.
+- The reward weights are chosen, not tuned, and now also measured. They are a
+  starting point and the first thing to suspect if step 3 learns something
+  strange.
+- The environment is not validated by a policy learning in it. Twenty-seven
+  contract tests say it does what it claims, and a review against the consumer
+  found five things the tests did not. Neither can say the task is learnable.
+  That is what step 3 is for.
+- The reward has still never had anything optimise against it. Three of its
+  four penalties are measurably inert and the fallen region is nearly flat;
+  both are written up above rather than quietly retuned, because changing
+  either invalidates the 108.7 baseline they would be measured against.
+- No observation noise, no domain randomisation, no actuator variation. The
+  environment runs one nominal physics model. Step 4 adds the spread.
+- Earlier revisions of this README described every rate as measured against a
+  background process taking about 9% of one core. That figure came from
+  `ps -o pcpu`, which reports CPU time averaged over a process's entire
+  lifetime — a long-lived interactive process that was busy an hour ago and is
+  idle now still reads several percent there. `bench.py` now samples
+  `/proc/<pid>/stat` twice a fraction of a second apart and reports the rate
+  *now*, in percent of one core, warning only above 20% of a core. The
+  certified sweep raised no warning under the corrected check.
+- Every policy here comes from one training seed, except step 3's final run:
+  [mujoco-vecenv-cpp](https://github.com/AungKaung1928/mujoco-vecenv-cpp) repeated
+  it on seeds 1 and 2 (`runs/ppo_v2_s1.pt`, `runs/ppo_v2_s2.pt`, same protocol in
+  12.5M-step invocations). They score 357.3 ± 7.6 and 342.2 ± 5.1 with survival
+  0.999 and 0.895, so the 0.73 survival above is the low draw of three
+  (mean 348.1 ± 8.1, survival 0.87 ± 0.14). Step 3 ran its full 50M steps;
+  step 4 has one chunk of two, and step 4's gap table and step 5 are measured on
+  step 3's chunk-1 policy so that they compare like with like. Step 4 found that
+  randomisation made this policy worse at standing; that is a finding about one
+  seed, half the schedule and one reward, not about domain randomisation in
+  general. The gap table would move if the DR run's second chunk ran.
+- Run-to-run spread on the certified sweep is about 1% at 8 processes, from
+  two runs seven minutes apart. That is not enough samples to call it a
+  distribution, and it says nothing about spread across days, where the host
+  power state is the dominant term and has already moved these numbers by 40%.
+  Two significant figures is still all any of this supports.
+
+</details>
+
+<details><summary><b>Step 1 — CPU throughput gate: scaling, power state, sustained rate, budget</b></summary>
 
 ## Step 1 — can this box simulate the duck fast enough?
 
@@ -349,7 +501,9 @@ answer. What matters operationally is settled anyway: **8 processes is the
 right choice**, because it delivers the most total throughput even at 55%
 efficiency.
 
----
+</details>
+
+<details><summary><b>Three model findings and the drop tests</b></summary>
 
 ## Three things about the model that changed the plan
 
@@ -460,7 +614,9 @@ The same test on `walk` topples at the identical 0.79 s — the dynamics match
 until the body reaches the floor — and then sinks to −10.5 cm, which is finding
 1 again, visible as a number.
 
----
+</details>
+
+<details><summary><b>Step 2 — environment contract and known risks going into step 3</b></summary>
 
 ## Step 2 — the environment contract
 
@@ -614,8 +770,6 @@ Reading a mixture of joint angles and backlash deflections produces entirely
 plausible numbers and no error. That is exactly the failure that would make a
 sim-to-sim transfer result meaningless while looking fine.
 
----
-
 ## Known risks going into step 3
 
 Step 2 closed with the environment reviewed against the thing that is about to
@@ -678,36 +832,9 @@ describe the body's configuration carrying the least variance of all — so an
 unnormalised first layer attends mostly to the policy's own previous output.
 Step 3 needs a running observation normaliser rather than a better fixed guess.
 
-## Scope, now that the gate has been measured
+</details>
 
-- **In:** stand and recover from pushes, on `groundcontact`, ~50M env steps.
-  **1.0 h** at the measured rate. One comfortable sitting, checkpointed
-  anyway.
-- **In:** domain randomisation over the four measured actuator classes,
-  evaluated on `walk_backlash` as held-out physics.
-- **In, was previously deferred:** a walking gait, 400M steps. **8.4 h,
-  five chunks** of ≤2 h, against the 36 h that had put it out of reach. The
-  estimate moved four times while the scope conclusion never did, which is the
-  only reason the moving was tolerable.
-- **Out:** anything requiring mjlab, MuJoCo Warp, or a GPU.
-
-## Steps
-
-1. **Feasibility gate — done.** Asset fetch, model inspection, CPU throughput,
-   drop tests. This README.
-2. **Environment contract — done.** 48-dim observation, 14-dim action, 50 Hz,
-   fixed-length episodes with seeded pushes, hand-written multiprocess vector
-   env, 27 contract tests.
-3. **PPO — measured, 50M steps in two chunks.** Vectorised PPO from
-   [ppo-from-scratch](https://github.com/AungKaung1928/ppo-from-scratch) with a
-   running observation normaliser, truncation bootstrap and chunked checkpoints,
-   against the PD hold-pose baseline under a re-decided reward (below).
-   Metric: recovery rate under randomised pushes, 100 episodes x 5 seeds.
-4. **Domain randomisation — chunk 1 measured; it did not help.** Ranges from the four
-   measured servo fits; evaluated on `groundcontact_backlash` and `rollers`,
-   not `walk_backlash` (see step 4 for why the plan changed). Report the gap.
-5. **ONNX export — measured on the chunk-1 policy.** Normaliser folded into the
-   graph, verified against PyTorch on rollout observations, 1-thread p50/p99.
+<details><summary><b>Step 3 — reward v2 decision and PPO results (both chunks)</b></summary>
 
 ## Step 3 — the reward decision
 
@@ -877,6 +1004,10 @@ The KL stop did what it was put in for. Over chunk 1 the mean approximate KL per
 
 Wall-clock: chunk 2 ran as three invocations, which is why the `--chunk-steps 12500000` is there. The first ran 58 min on 2026-09-25 (25.0M to 37.6M, 4,344 env-steps/s mean). The second was stopped by hand after about 4 minutes, just after its checkpoint at 38.52M; three updates were lost and trained again. The third ran 60 min on 2026-09-29 (38.5M to 50.0M, 3,700 mean, 3,289 over the first five updates and 3,847 over the last five). The runner rests the machine for 30 minutes after each 2.5 h of work, and the chunks were under an hour each. The throughput warning fired on 86 of 12,207 updates, against 4,296 of 12,208 in the single 2.4-hour chunk 1. That is further evidence that chunk 1's decay was heat or power and not the code. `runs/ppo_v2.json` holds the whole 50M-step trace and eval history. The chunk-1 policy, its training record and its evaluation are kept as `runs/ppo_v2_chunk1.pt`, `runs/ppo_v2_chunk1.json` and `runs/eval_v2_chunk1_groundcontact.json`, byte-identical to what was committed at chunk 1. Steps 4 and 5 were measured on that file. `runs/gap.json` and `runs/onnx_v2.json` still name it `runs/ppo_v2.pt`, which was that file's name when they were written.
 
+</details>
+
+<details><summary><b>Steps 4 and 5 — domain randomisation gap table and ONNX export</b></summary>
+
 ## Step 4 — domain randomisation and the held-out physics (chunk 1 measured 2026-09-23)
 
 **The plan changed, and the reason is finding 1 again.** Step 2 named
@@ -1009,77 +1140,7 @@ python export_onnx.py runs/ppo_v2_chunk1.pt   # -> runs/policy_v2.onnx, runs/onn
 | torch eager, 1 thread, batch 1, p50 / p99 | 0.026 / 0.128 ms |
 | share of the 20 ms control period used at p99 | 0.2% |
 
-## What steps 1 and 2 do not prove
-
-- Nothing here trains anything. Throughput is measured with random actions
-  around STAND. A real PPO loop adds policy forward passes, advantage
-  computation and optimiser steps on top, so the measured rate is an upper
-  bound on the rollout half only, not on training.
-- **The 13,300 env-steps/s budget figure was the rollout physics, not the
-  training loop.** It is a directly measured sustained 8-process
-  `groundcontact` rate times a single-core wrapper cost. Step 3 measured the
-  loop itself at roughly a quarter of that; the bullet below has the chain.
-- **Neither sustained run reached a steady state.** `walk` was still falling
-  −1.0% per window after twelve; `groundcontact` bottomed out at window 11 and
-  was still climbing +0.6% after eighteen. The 9% plateau band on the latter
-  is the honest uncertainty on the budget rate, and `--windows 30` is what
-  would close it.
-- **This README's throughput figure has been wrong five times: 28,749,
-  18,400, 8,000, 13,300, and now about 3,300 with a policy in the loop.**
-  Three corrections downward from unmeasured optimism, one upward from
-  stacking two derates on the same effect, and a fifth downward when step 3
-  finally ran the thing itself: `ppo.py` reports 3,000–3,750 env-steps/s
-  (see *Step 3 results*). The 13,300 was bare physics × a wrapper factor; the
-  eight pipe round trips per step and the policy forward pass were never in
-  the composition. [mujoco-vecenv-cpp](https://github.com/AungKaung1928/mujoco-vecenv-cpp)
-  measured the same env from the other side and put the Python vector env at
-  about 6,400 env-steps/s under random actions at 8 processes; its rerun of
-  step 3 on its C++ env took 3.1 h for 50M steps against 4.4 h here. Treat any
-  number here as provisional until a script in this repo reproduces it on the
-  workload it is quoted for, and note that the conservative direction was
-  wrong too — a safety factor applied to a number that already contains it is
-  not caution, it is an error.
-- The 0.79 s fall time is one deterministic rollout from one keyframe. It is a
-  baseline to beat, not a distribution. The 108.9 ± 2.8 return is the
-  distributional version of it, over 20 seeds, and that is the number step 3
-  should be compared against.
-- The reward weights are chosen, not tuned, and now also measured. They are a
-  starting point and the first thing to suspect if step 3 learns something
-  strange.
-- The environment is not validated by a policy learning in it. Twenty-seven
-  contract tests say it does what it claims, and a review against the consumer
-  found five things the tests did not. Neither can say the task is learnable.
-  That is what step 3 is for.
-- The reward has still never had anything optimise against it. Three of its
-  four penalties are measurably inert and the fallen region is nearly flat;
-  both are written up above rather than quietly retuned, because changing
-  either invalidates the 108.7 baseline they would be measured against.
-- No observation noise, no domain randomisation, no actuator variation. The
-  environment runs one nominal physics model. Step 4 adds the spread.
-- Earlier revisions of this README described every rate as measured against a
-  background process taking about 9% of one core. That figure came from
-  `ps -o pcpu`, which reports CPU time averaged over a process's entire
-  lifetime — a long-lived interactive process that was busy an hour ago and is
-  idle now still reads several percent there. `bench.py` now samples
-  `/proc/<pid>/stat` twice a fraction of a second apart and reports the rate
-  *now*, in percent of one core, warning only above 20% of a core. The
-  certified sweep raised no warning under the corrected check.
-- Every policy here comes from one training seed, except step 3's final run:
-  [mujoco-vecenv-cpp](https://github.com/AungKaung1928/mujoco-vecenv-cpp) repeated
-  it on seeds 1 and 2 (`runs/ppo_v2_s1.pt`, `runs/ppo_v2_s2.pt`, same protocol in
-  12.5M-step invocations). They score 357.3 ± 7.6 and 342.2 ± 5.1 with survival
-  0.999 and 0.895, so the 0.73 survival above is the low draw of three
-  (mean 348.1 ± 8.1, survival 0.87 ± 0.14). Step 3 ran its full 50M steps;
-  step 4 has one chunk of two, and step 4's gap table and step 5 are measured on
-  step 3's chunk-1 policy so that they compare like with like. Step 4 found that
-  randomisation made this policy worse at standing; that is a finding about one
-  seed, half the schedule and one reward, not about domain randomisation in
-  general. The gap table would move if the DR run's second chunk ran.
-- Run-to-run spread on the certified sweep is about 1% at 8 processes, from
-  two runs seven minutes apart. That is not enough samples to call it a
-  distribution, and it says nothing about spread across days, where the host
-  power state is the dominant term and has already moved these numbers by 40%.
-  Two significant figures is still all any of this supports.
+</details>
 
 ## Reproducing
 
