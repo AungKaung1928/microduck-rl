@@ -39,6 +39,7 @@ jobs:
       - run: python test_model.py
       - run: python test_env.py
       - run: python test_reward.py
+      - run: python test_metrics.py
       - run: python test_dr.py
       - run: python test_ppo.py
       - run: python test_export.py
