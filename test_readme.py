@@ -1,0 +1,86 @@
+"""README numbers against the committed result files (no simulation, stdlib only).
+
+Checks the step-3 chunk-2 results table, the "per-seed gains" sentence, and the
+v1 / v2 PD baselines and joint-velocity term shares quoted in the reward decision.
+A README edit or a rerun that changes a JSON without the other fails here.
+
+Run:  python test_readme.py
+"""
+import json
+import os
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+FAILED = []
+
+
+def check(name, ok, detail=""):
+    print(f"  {'ok  ' if ok else 'FAIL'}  {name}" + (f"   {detail}" if detail else ""))
+    if not ok:
+        FAILED.append(name)
+
+
+def load(name):
+    with open(os.path.join(HERE, "runs", name)) as f:
+        return json.load(f)
+
+
+with open(os.path.join(HERE, "README.md"), encoding="utf-8") as f:
+    README = f.read()
+
+
+def row(prefix):
+    """Cells of the first README table row starting with `| prefix |`, label dropped."""
+    for line in README.splitlines():
+        if line.startswith(f"| {prefix} |"):
+            return [c.strip() for c in line.strip().strip("|").split("|")][1:]
+    raise AssertionError(f"README row not found: {prefix}")
+
+
+def pm(m, s, nd=1):
+    return f"{m:.{nd}f} ± {s:.{nd}f}"
+
+
+ev = load("eval_v2_groundcontact.json")
+ev1 = load("eval_v2_chunk1_groundcontact.json")
+L, L1, PD = ev["learned"], ev1["learned"], ev["pd"]
+
+print("step 3, chunk 2 table")
+r = row("PPO v2, 50M steps (`runs/ppo_v2.pt`)")
+check("PPO 50M return", r[0] == pm(L["return_mean"], L["seed_std_return"]), r[0])
+check("PPO 50M survival", r[1] == f"{L['survival_mean']:.2f}", r[1])
+check("PPO 50M upright", r[2] == pm(L["upright_mean"], L["seed_std_upright"], 2), r[2])
+check("PPO 50M recovery", r[3] == pm(L["recovery_rate"], L["seed_std_recovery"], 2), r[3])
+check("PPO 50M pushes on a fallen robot", r[5] == str(L["pushes_unrecoverable"]), r[5])
+r = row("PPO v2, chunk 1 = 25M steps")
+check("PPO 25M return", r[0] == pm(L1["return_mean"], L1["seed_std_return"]), r[0])
+check("PPO 25M survival", r[1] == f"{L1['survival_mean']:.2f}", r[1])
+check("PPO 25M pushes on a fallen robot", r[5] == str(L1["pushes_unrecoverable"]), r[5])
+# the PD label also starts a row of the summary table at the top: take the 7-column one
+r = [l for l in README.splitlines() if l.startswith("| PD hold-pose, reward v2 |") and l.count("|") == 8][0]
+cells = [c.strip() for c in r.strip().strip("|").split("|")][1:]
+check("PD return", cells[0] == pm(PD["return_mean"], PD["seed_std_return"]), cells[0])
+check("PD survival", cells[1] == f"{PD['survival_mean']:.2f}", cells[1])
+check("PD recovery", cells[3] == pm(PD["recovery_rate"], PD["seed_std_recovery"], 2), cells[3])
+check("PD pushes on a fallen robot", cells[5] == str(PD["pushes_unrecoverable"]), cells[5])
+
+print("per-seed gains sentence")
+gains = [a - b for a, b in zip(L["per_seed_return"], L1["per_seed_return"])]
+text = ", ".join(f"{g:.1f}" for g in gains[:-1]) + f" and {gains[-1]:.1f}"
+check("per-seed gains", f"per-seed gains {text}" in README, text)
+check("mean gain +12.2", f"+{L['return_mean'] - L1['return_mean']:.1f} return on the same seeds" in README)
+check("every seed went up", all(g > 0 for g in gains))
+
+print("reward decision: baselines and term shares")
+b1, b2 = load("baseline.json"), load("baseline_v2.json")
+check("v1 PD baseline 108.7 ± 2.9", f"**{pm(b1['return_mean'], b1['return_std'])}**" in README)
+check("v2 PD baseline 175.2 ± 3.1", f"{pm(b2['return_mean'], b2['return_std'])} of 500" in README)
+jv_rand = -b2["term_sums_random"]["joint_vel"] / b2["random_return"] * 100
+jv_pd = -b2["term_sums"]["joint_vel"] / b2["return_mean"] * 100
+check("v2 joint_vel 5.24% random / 0.17% PD", f"{jv_rand:.2f}% under random actions and {jv_pd:.2f}% under the PD" in README,
+      f"{jv_rand:.2f} / {jv_pd:.2f}")
+for k in ("posture", "effort", "joint_vel"):
+    for pol, sums, ret in (("PD", b1["term_sums"], b1["return_mean"]), ("random", b1["term_sums_random"], b1["random_return"])):
+        check(f"v1 {k} under 0.25% ({pol})", abs(sums[k] / ret) < 0.0025, f"{abs(sums[k] / ret) * 100:.3f}%")
+
+print(f"\n{'FAILED: ' + ', '.join(FAILED) if FAILED else 'all passed'}")
+raise SystemExit(1 if FAILED else 0)

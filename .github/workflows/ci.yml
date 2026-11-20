@@ -23,6 +23,7 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python test_ppo.py
       - run: python test_export.py
+      - run: python test_readme.py
 
   full:
     # Fetch the pinned upstream MJCF + meshes, then the whole suite: model
