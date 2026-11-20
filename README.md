@@ -41,6 +41,7 @@ The baseline the policy has to beat. The shipped PD controller holding the STAND
 | DR 25M → `rollers` | return / upright gap | −164.9 / −0.15 | held-out physics, 147.3 ± 2.3 |
 | ONNX vs torch | max abs difference | 2.4e-06 | 1,000 rollout observations, normaliser folded into the graph |
 | ONNX Runtime | p50 / p99 latency | 0.010 / 0.033 ms | 1 intra-op thread, batch 1; torch eager 0.026 / 0.128 ms |
+| ONNX Runtime from C++ | p50, 5 runs | 0.0063–0.0064 ms vs Python 0.0088 ms | same ORT 1.30.0 library, same 1,000 obs, outputs bit-identical; on battery |
 | CPU physics, `walk`, 8 processes | env-steps/s | 28,749 burst, ~19,400 after 4 min | 20 s windows; 55% scaling efficiency |
 | training loop, 8 workers | env-steps/s | 3,875 → 3,139 (chunk 1) | 2.4 h per 25M steps; 50M = 4.4 h |
 
@@ -1139,6 +1140,31 @@ python export_onnx.py runs/ppo_v2_chunk1.pt   # -> runs/policy_v2.onnx, runs/onn
 | ONNX Runtime, 1 intra-op thread, batch 1, p50 / p99 | 0.010 / 0.033 ms |
 | torch eager, 1 thread, batch 1, p50 / p99 | 0.026 / 0.128 ms |
 | share of the 20 ms control period used at p99 | 0.2% |
+
+### Step 5b — the same graph from C++ (added 2026-11-20)
+
+`cpp/bench_ort.cpp` loads `runs/policy_v2.onnx` through the ONNX Runtime C++ API and runs the
+same protocol as above: 1 intra-op thread, batch 1, 50 warm-up runs, 2,000 timed runs cycling
+over 1,000 rollout observations of the chunk-1 policy. `cpp/dump_obs.py` writes those
+observations and the Python ONNX Runtime outputs, and times Python on the same observations.
+Both sides use ONNX Runtime 1.30.0 (same shared library), run alternately, 5 times each, on
+battery power, so compare them with each other, not with the 0.010 / 0.033 ms above.
+
+```bash
+python cpp/dump_obs.py runs/ppo_v2_chunk1.pt runs/policy_v2.onnx   # -> cpp/obs.bin, cpp/ref.bin
+ORT_INCLUDE=... ORT_LIB=... cpp/build.sh                            # see the header of build.sh
+cpp/bench_ort runs/policy_v2.onnx cpp/obs.bin cpp/ref.bin 2000      # exit 1 if outputs differ
+```
+
+| 5 runs each | Python | C++ |
+|---|---|---|
+| max \|C++ − Python\| over 1,000 observations | | 0 (bit-identical) |
+| p50, range over runs | 0.0088 ms | 0.0063–0.0064 ms |
+| p99, range over runs | 0.019–0.051 ms | 0.014–0.023 ms |
+
+C++ removes about 2.4 µs (28%) of the median call, the Python binding overhead. Against a
+20 ms control period both are under 0.3% at p99, so for this policy the language does not
+decide the latency budget; the p99 tail is noisy on battery and the ranges overlap.
 
 </details>
 
