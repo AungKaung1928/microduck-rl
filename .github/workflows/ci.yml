@@ -46,3 +46,7 @@ jobs:
         run: python baseline.py --seeds 3 --out /tmp/b1.json && python baseline.py --seeds 3 --reward v2 --out /tmp/b2.json
       - name: PPO smoke, 1024 env steps
         run: python ppo.py --total-steps 1024 --num-envs 2 --num-steps 64 --eval-every 0 --ckpt-every 0 --tag ci --out /tmp/ci --force
+      - name: C++ ONNX Runtime 1.30.0, outputs bit-identical to Python (cpp/ci.sh)
+        run: |
+          pip install onnxruntime==1.30.0
+          cpp/ci.sh

@@ -1153,6 +1153,8 @@ battery power, so compare them with each other, not with the 0.010 / 0.033 ms ab
 ```bash
 python cpp/dump_obs.py runs/ppo_v2_chunk1.pt runs/policy_v2.onnx   # -> cpp/obs.bin, cpp/ref.bin
 ORT_INCLUDE=... ORT_LIB=... cpp/build.sh                            # see the header of build.sh
+# or all of it, as CI runs it (downloads the pinned headers, needs zstd and fetched assets):
+# pip install onnxruntime==1.30.0 && cpp/ci.sh
 cpp/bench_ort runs/policy_v2.onnx cpp/obs.bin cpp/ref.bin 2000      # exit 1 if outputs differ
 ```
 
