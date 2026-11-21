@@ -1176,7 +1176,7 @@ From a fresh clone. Steps 1-2 need only `mujoco` and `numpy`; steps 3-5 add
 CPU `torch`, `onnx` and `onnxruntime`.
 
 ```bash
-git clone https://github.com/AungKaung1928/microduck-rl.git
+git clone <this repo URL>
 cd microduck-rl
 python3 -m venv .venv && . .venv/bin/activate
 pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
