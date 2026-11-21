@@ -1,7 +1,8 @@
 """README numbers against the committed result files (no simulation, stdlib only).
 
 Checks the step-3 chunk-2 results table, the "per-seed gains" sentence, and the
-v1 / v2 PD baselines and joint-velocity term shares quoted in the reward decision.
+v1 / v2 PD baselines and joint-velocity term shares quoted in the reward decision,
+and the step-1 scaling and sustained-throughput tables.
 A README edit or a rerun that changes a JSON without the other fails here.
 
 Run:  python test_readme.py
@@ -104,6 +105,24 @@ l = next(x for x in README.splitlines() if x.startswith("| ONNX Runtime | p50 / 
 want = (f"{ox['onnx_ms_p50']:.3f} / {ox['onnx_ms_p99']:.3f} ms",
         f"torch eager {ox['torch_ms_p50']:.3f} / {ox['torch_ms_p99']:.3f} ms")
 check("ONNX p50/p99 and torch eager", all(w in l for w in want), " | ".join(want))
+
+print("step 1, scaling and sustained-throughput tables")
+bm = load("bench_main.json")
+for r in bm["rows"]:
+    want = [f"{r['env_steps_per_s']:,.0f}", f"{r['per_proc']:,.0f}", f"{r['speedup']:.2f}x", f"{r['efficiency']:.0%}"]
+    check(f"scaling row, {r['procs']} processes", row(str(r["procs"])) == want, " | ".join(want))
+tables = README.split("| elapsed | env-steps/s | vs peak |")[1:]
+check("two sustained tables", len(tables) == 2)
+for name, table in zip(("bench_sustained.json", "bench_gc_sustained.json"), tables):
+    su = load(name)
+    for line in table.splitlines()[2:]:
+        if not line.startswith("|"):
+            break
+        cells = [c.strip().split(" ←")[0] for c in line.strip().strip("|").split("|")]
+        i = int(cells[0].removesuffix(" s")) // int(su["window_s"]) - 1      # window that ends at this time
+        rate = su["rates"][i]
+        vs = "—" if i == 0 else f"{rate / su['peak'] - 1:+.0%}".replace("-", "−")
+        check(f"{name} row, {cells[0]}", cells[1:] == [f"{rate:,.0f}", vs], f"{rate:,.0f} | {vs}")
 
 print(f"\n{'FAILED: ' + ', '.join(FAILED) if FAILED else 'all passed'}")
 raise SystemExit(1 if FAILED else 0)
