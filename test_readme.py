@@ -105,6 +105,9 @@ l = next(x for x in README.splitlines() if x.startswith("| ONNX Runtime | p50 / 
 want = (f"{ox['onnx_ms_p50']:.3f} / {ox['onnx_ms_p99']:.3f} ms",
         f"torch eager {ox['torch_ms_p50']:.3f} / {ox['torch_ms_p99']:.3f} ms")
 check("ONNX p50/p99 and torch eager", all(w in l for w in want), " | ".join(want))
+l = next(x for x in README.splitlines() if x.startswith("| ONNX vs torch | max abs difference |"))
+want = (f"| {ox['max_diff_torch_onnx']:.1e} |", f"{ox['n_check']:,} rollout observations")
+check("ONNX vs torch max diff", all(w in l for w in want) and ox["verified"], " | ".join(want))
 
 print("step 1, scaling and sustained-throughput tables")
 bm = load("bench_main.json")
