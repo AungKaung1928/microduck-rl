@@ -82,5 +82,21 @@ for k in ("posture", "effort", "joint_vel"):
     for pol, sums, ret in (("PD", b1["term_sums"], b1["return_mean"]), ("random", b1["term_sums_random"], b1["random_return"])):
         check(f"v1 {k} under 0.25% ({pol})", abs(sums[k] / ret) < 0.0025, f"{abs(sums[k] / ret) * 100:.3f}%")
 
+print("step 4, DR gap table")
+gap = load("gap.json")["cells"]
+for line in README.splitlines():
+    if not (line.startswith("| nominal | `") or line.startswith("| DR | `")):
+        continue
+    cells = [c.strip() for c in line.strip().strip("|").split("|")]
+    trained, variant = ("nominal" if cells[0] == "nominal" else "dr"), cells[1].strip("`")
+    c = gap[f"{trained}/{variant}"]
+    want = [pm(c["return_mean"], c["seed_std_return"]), pm(c["upright_mean"], c["seed_std_upright"], 2),
+            f"{c['survival_mean']:.2f}", f"{c['height_p50']:.3f} m"]
+    ref = gap[f"{trained}/groundcontact"]
+    if variant != "groundcontact":
+        want += [f"{c['return_mean'] - ref['return_mean']:+.1f}".replace("-", "−"),
+                 f"{c['upright_mean'] - ref['upright_mean']:+.2f}".replace("-", "−")]
+    check(f"gap {trained}/{variant}", cells[2:2 + len(want)] == want, f"README {cells[2:2 + len(want)]} vs JSON {want}")
+
 print(f"\n{'FAILED: ' + ', '.join(FAILED) if FAILED else 'all passed'}")
 raise SystemExit(1 if FAILED else 0)
