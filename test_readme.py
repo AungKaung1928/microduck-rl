@@ -98,5 +98,12 @@ for line in README.splitlines():
                  f"{c['upright_mean'] - ref['upright_mean']:+.2f}".replace("-", "−")]
     check(f"gap {trained}/{variant}", cells[2:2 + len(want)] == want, f"README {cells[2:2 + len(want)]} vs JSON {want}")
 
+print("step 5, ONNX latency row")
+ox = load("onnx_v2.json")
+l = next(x for x in README.splitlines() if x.startswith("| ONNX Runtime | p50 / p99 latency |"))
+want = (f"{ox['onnx_ms_p50']:.3f} / {ox['onnx_ms_p99']:.3f} ms",
+        f"torch eager {ox['torch_ms_p50']:.3f} / {ox['torch_ms_p99']:.3f} ms")
+check("ONNX p50/p99 and torch eager", all(w in l for w in want), " | ".join(want))
+
 print(f"\n{'FAILED: ' + ', '.join(FAILED) if FAILED else 'all passed'}")
 raise SystemExit(1 if FAILED else 0)
