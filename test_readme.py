@@ -175,6 +175,20 @@ for v in ("walk", "groundcontact"):
     check(f"wrapper row {v}", [c.strip("*") for c in row(f"`{v}`")] == want, " | ".join(want))
 g = bw["groundcontact"]
 check("wrapper sentence", f"{g['wrapped']:,.0f} against {g['bare']:,.0f} env-steps/s" in " ".join(README.split()))
+print("step 1, repeat sweep and the CPU-pinning test")
+m2 = {r["procs"]: r for r in load("bench_main2.json")["rows"]}
+a, b = m2[8]["env_steps_per_s"], wk[8]["env_steps_per_s"]
+check("repeat sweep 8-process rows", f"{a:,.0f} and {b:,.0f} — {abs(a / b - 1):.1%} apart" in flat, f"{a:,.0f} / {b:,.0f}")
+pins = {}
+for name, label in (("bench_pin_low.json", "CPUs 0-3"), ("bench_pin_high.json", "CPUs 10-13")):
+    d = load(name)
+    pins[label] = d
+    want = [f"{d['rows'][0]['per_proc']:,.0f}", f"{d['ref_before']:,.0f}"]
+    check(f"pinned row {label}", row(label) == want, " | ".join(want))
+lo, hi = pins["CPUs 0-3"], pins["CPUs 10-13"]
+want = (f"A {lo['rows'][0]['per_proc'] / hi['rows'][0]['per_proc'] - 1:.0%} difference under load, "
+        f"{lo['ref_before'] / hi['ref_before'] - 1:.0%} single-threaded")
+check("pinning sentence", want in flat, want)
 tables = README.split("| elapsed | env-steps/s | vs peak |")[1:]
 check("two sustained tables", len(tables) == 2)
 for name, table in zip(("bench_sustained.json", "bench_gc_sustained.json"), tables):
