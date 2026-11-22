@@ -9,6 +9,7 @@ Run:  python test_readme.py
 """
 import json
 import os
+import statistics
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FAILED = []
@@ -70,6 +71,19 @@ text = ", ".join(f"{g:.1f}" for g in gains[:-1]) + f" and {gains[-1]:.1f}"
 check("per-seed gains", f"per-seed gains {text}" in README, text)
 check("mean gain +12.2", f"+{L['return_mean'] - L1['return_mean']:.1f} return on the same seeds" in README)
 check("every seed went up", all(g > 0 for g in gains))
+
+print("seeds 1, 2 (trained via mujoco-vecenv-cpp) and the 3-seed mean")
+S = [L] + [load(f"eval_v2_s{i}_groundcontact.json")["learned"] for i in (1, 2)]
+rets, surv = [x["return_mean"] for x in S], [x["survival_mean"] for x in S]
+three = f"3-seed mean {pm(statistics.mean(rets), statistics.stdev(rets))}, survival {pm(statistics.mean(surv), statistics.stdev(surv), 2)}"
+want = [f"{pm(S[1]['return_mean'], S[1]['seed_std_return'])} / {pm(S[2]['return_mean'], S[2]['seed_std_return'])}",
+        f"same protocol; {three}"]
+check("seeds 1, 2 summary row", row("PPO v2 seeds 1, 2 (via mujoco-vecenv-cpp)")[1:] == want, " | ".join(want))
+text = " ".join(README.split())
+want = (f"They score {pm(S[1]['return_mean'], S[1]['seed_std_return'])} and {pm(S[2]['return_mean'], S[2]['seed_std_return'])}"
+        f" with survival {surv[1]:.3f} and {surv[2]:.3f}, so the {surv[0]:.2f} survival above is the low draw of three"
+        f" (mean {pm(statistics.mean(rets), statistics.stdev(rets))}, survival {pm(statistics.mean(surv), statistics.stdev(surv), 2)})")
+check("seeds 1, 2 sentence", want in text and surv[0] == min(surv), want)
 
 print("reward decision: baselines and term shares")
 b1, b2 = load("baseline.json"), load("baseline_v2.json")
