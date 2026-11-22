@@ -26,8 +26,11 @@ def load(name):
         return json.load(f)
 
 
-with open(os.path.join(HERE, "README.md"), encoding="utf-8") as f:
+# docs/DETAILS.md holds every table; the short README.md repeats a few of its rows
+with open(os.path.join(HERE, "docs", "DETAILS.md"), encoding="utf-8") as f:
     README = f.read()
+with open(os.path.join(HERE, "README.md"), encoding="utf-8") as f:
+    SHORT = f.read()
 
 
 def row(prefix):
@@ -45,6 +48,14 @@ def pm(m, s, nd=1):
 ev = load("eval_v2_groundcontact.json")
 ev1 = load("eval_v2_chunk1_groundcontact.json")
 L, L1, PD = ev["learned"], ev1["learned"], ev["pd"]
+
+print("short README rows are copies of DETAILS rows")
+details_rows = set(README.splitlines())
+for line in SHORT.splitlines():
+    if line.startswith("| ") and not line.startswith("| method |"):
+        check(f"short row {line.split('|')[1].strip()}", line in details_rows, line)
+for n in ("344.8 ± 2.9", "175.8 ± 0.2", "147.3 against 373.6", "0.79 s"):
+    check(f"short README number {n}", n in SHORT and n in README, n)
 
 print("step 3, chunk 2 table")
 r = row("PPO v2, 50M steps (`runs/ppo_v2.pt`)")
