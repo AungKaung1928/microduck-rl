@@ -155,6 +155,26 @@ bm = load("bench_main.json")
 for r in bm["rows"]:
     want = [f"{r['env_steps_per_s']:,.0f}", f"{r['per_proc']:,.0f}", f"{r['speedup']:.2f}x", f"{r['efficiency']:.0%}"]
     check(f"scaling row, {r['procs']} processes", row(str(r["procs"])) == want, " | ".join(want))
+print("step 1, groundcontact vs walk scaling table and the wrapper cost")
+gc = {r["procs"]: r for r in load("bench_gc.json")["rows"]}
+wk = {r["procs"]: r for r in bm["rows"]}
+gc_table = README.split("| processes | `groundcontact` | efficiency | `walk` | efficiency |")[1].splitlines()[2:]
+seen = 0
+for line in gc_table:
+    if not line.startswith("|"):
+        break
+    cells = [c.strip().strip("*") for c in line.strip().strip("|").split("|")]
+    n = int(cells[0])
+    want = [f"{gc[n]['env_steps_per_s']:,.0f}", f"{gc[n]['efficiency']:.0%}", f"{wk[n]['env_steps_per_s']:,.0f}", f"{wk[n]['efficiency']:.0%}"]
+    check(f"groundcontact/walk row, {n} processes", cells[1:] == want, " | ".join(want))
+    seen += 1
+check("groundcontact/walk table has every bench_gc row", seen == len(gc))
+bw = load("bench_wrapper.json")["rows"]
+for v in ("walk", "groundcontact"):
+    want = [f"{bw[v]['bare']:,.0f}", f"{bw[v]['wrapped']:,.0f}", f"{bw[v]['overhead']:.0%}"]
+    check(f"wrapper row {v}", [c.strip("*") for c in row(f"`{v}`")] == want, " | ".join(want))
+g = bw["groundcontact"]
+check("wrapper sentence", f"{g['wrapped']:,.0f} against {g['bare']:,.0f} env-steps/s" in " ".join(README.split()))
 tables = README.split("| elapsed | env-steps/s | vs peak |")[1:]
 check("two sustained tables", len(tables) == 2)
 for name, table in zip(("bench_sustained.json", "bench_gc_sustained.json"), tables):
