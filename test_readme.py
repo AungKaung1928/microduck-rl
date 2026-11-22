@@ -124,6 +124,18 @@ check("KL stop key point", want in flat, want)
 share = sum(r["approx_kl"] > 0.02 for r in c2) / len(c2)
 check("share of chunk-2 updates logging KL > 0.02", f"{share:.0%} of updates log above 0.02" in flat, f"{share:.0%}")
 
+print("training throughput and wall-clock from the run records")
+r1, r2, rd = load("ppo_v2_chunk1.json"), load("ppo_v2.json"), load("ppo_v2dr.json")
+want = (f"**{r1['rate_first5']:,.0f} env-steps/s over the first five updates, {r1['rate_last5']:,.0f} over the last five**"
+        f" (`runs/ppo_v2_chunk1.json`, the chunk-1 copy; the chunk took {r1['chunk_wall_s'] / 3600:.1f} h)")
+check("chunk-1 rate sentence", want in flat, want)
+check("chunk-1 summary row", f"{r1['rate_first5']:,.0f} → {r1['rate_last5']:,.0f} (chunk 1)" in flat)
+want = (f"to {r2['global_step'] / 1e6:.1f}M, {r2['rate_mean']:,.0f} mean, "
+        f"{r2['rate_first5']:,.0f} over the first five updates and {r2['rate_last5']:,.0f} over the last five)")
+check("chunk-2 third invocation", want in flat and round(r2["chunk_wall_s"] / 60) == 60, want)
+want = f"It took {rd['chunk_wall_s'] / 3600:.1f} h at {rd['rate_mean']:,.0f} env-steps/s on average."
+check("DR run wall-clock and rate", want in flat, want)
+
 print("step 4, DR gap table")
 gap = load("gap.json")["cells"]
 for line in README.splitlines():
