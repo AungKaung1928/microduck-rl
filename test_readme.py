@@ -108,6 +108,22 @@ for k in ("posture", "effort", "joint_vel"):
     for pol, sums, ret in (("PD", b1["term_sums"], b1["return_mean"]), ("random", b1["term_sums_random"], b1["random_return"])):
         check(f"v1 {k} under 0.25% ({pol})", abs(sums[k] / ret) < 0.0025, f"{abs(sums[k] / ret) * 100:.3f}%")
 
+print("step 3, KL stop: chunk 1 vs chunk 2 from the training trace")
+tr = load("ppo_v2.json")["trace"]
+n1 = load("ppo_v2_chunk1.json")["updates"]
+c1, c2 = [r for r in tr if r["update"] <= n1], [r for r in tr if r["update"] > n1]
+kl1, kl2 = (statistics.mean(r["approx_kl"] for r in c) for c in (c1, c2))
+cf1, cf2 = (statistics.mean(r["clipfrac"] for r in c) for c in (c1, c2))
+want = (f"Over chunk 1 the mean approximate KL per update was {kl1:.2f} and the mean clip fraction {cf1:.2f}. "
+        f"Over chunk 2 they were {kl2:.3f} and {cf2:.2f}, and the largest KL was "
+        f"{max(r['approx_kl'] for r in c2):.2f} against {max(r['approx_kl'] for r in c1):.0f}.")
+flat = " ".join(README.split())
+check("KL stop sentence", want in flat, want)
+want = f"from {kl1:.2f} to {kl2:.3f} and the clip fraction from {cf1:.2f} to {cf2:.2f}"
+check("KL stop key point", want in flat, want)
+share = sum(r["approx_kl"] > 0.02 for r in c2) / len(c2)
+check("share of chunk-2 updates logging KL > 0.02", f"{share:.0%} of updates log above 0.02" in flat, f"{share:.0%}")
+
 print("step 4, DR gap table")
 gap = load("gap.json")["cells"]
 for line in README.splitlines():
