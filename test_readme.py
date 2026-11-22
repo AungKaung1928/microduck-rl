@@ -56,6 +56,10 @@ for line in SHORT.splitlines():
         check(f"short row {line.split('|')[1].strip()}", line in details_rows, line)
 for n in ("344.8 ± 2.9", "175.8 ± 0.2", "147.3 against 373.6", "0.79 s"):
     check(f"short README number {n}", n in SHORT and n in README, n)
+# the same numbers sit on several lines: pin the headline line itself to the eval JSON
+head = [line for line in SHORT.splitlines() if line.startswith("PPO balance-and-push-recovery policy")]
+check("short README headline", len(head) == 1 and f"return {pm(L['return_mean'], L['seed_std_return'])} against the PD "
+      f"baseline's {pm(PD['return_mean'], PD['seed_std_return'])} of 500" in head[0], head)
 
 print("step 3, chunk 2 table")
 r = row("PPO v2, 50M steps (`runs/ppo_v2.pt`)")
