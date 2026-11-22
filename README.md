@@ -18,7 +18,7 @@ Domain randomisation made the policy worse (147.3 against 373.6 on `rollers`); g
 
 ## Quick start
 
-Linux, Python 3.10+, CPU only.
+Linux, Python 3.10+ (Ubuntu: the `python3-venv` package), CPU only. `test_env.py` takes ~4 s.
 
 ```bash
 git clone <this repo URL>
