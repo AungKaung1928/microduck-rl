@@ -63,3 +63,13 @@ jobs:
       - run: pip install onnxruntime==1.30.0
       - run: ./fetch_assets.sh
       - run: cpp/ci.sh
+
+  docker:
+    # The documented `docker run --rm microduck-rl`; a Dockerfile CI never builds goes stale.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build image
+        run: docker build -t microduck-rl .
+      - name: default command (tests inside the image)
+        run: docker run --rm microduck-rl
