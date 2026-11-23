@@ -218,5 +218,17 @@ for name, table in zip(("bench_sustained.json", "bench_gc_sustained.json"), tabl
         vs = "—" if i == 0 else f"{rate / su['peak'] - 1:+.0%}".replace("-", "−")
         check(f"{name} row, {cells[0]}", cells[1:] == [f"{rate:,.0f}", vs], f"{rate:,.0f} | {vs}")
 
+print("eval JSONs: every mean ± seed sd the docs quote equals its own per-seed list")
+for name in ("eval_v2_groundcontact.json", "eval_v2_chunk1_groundcontact.json",
+             "eval_v2_s1_groundcontact.json", "eval_v2_s2_groundcontact.json"):
+    ev_ = load(name)
+    for side in ("learned", "pd"):
+        r = ev_[side]
+        ok = abs(statistics.mean(r["per_seed_return"]) - r["return_mean"]) < 1e-9
+        for k in ("return", "recovery", "upright"):
+            if f"per_seed_{k}" in r:       # the chunk-1 eval has no per-seed upright
+                ok = ok and abs(statistics.stdev(r[f"per_seed_{k}"]) - r[f"seed_std_{k}"]) < 1e-12
+        check(f"{name} {side} per-seed consistency", ok)
+
 print(f"\n{'FAILED: ' + ', '.join(FAILED) if FAILED else 'all passed'}")
 raise SystemExit(1 if FAILED else 0)
